@@ -1,0 +1,1309 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HelpAS | Saha + PM + Muhasebe + İş Gücü</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        :root {
+            --bg: #060a12; --panel: #0b1220; --card: #111827; --border: #1e293b;
+            --text: #e2e8f0; --muted: #94a3b8; --accent: #22d3ee; --ok: #22c55e;
+            --warn: #eab308; --alarm: #ef4444; --pm: #a78bfa;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { background: var(--bg); color: var(--text); min-height: 100vh; }
+        input, select, textarea, button { font-size: 16px; }
+        #login-screen {
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            padding: 20px; background: radial-gradient(ellipse at top, #0f172a, #060a12);
+        }
+        .login-box {
+            background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+            padding: 28px; width: 100%; max-width: 380px;
+        }
+        .login-box h1 { font-size: 1.5rem; margin-bottom: 4px; }
+        .login-box h1 span { color: var(--accent); }
+        .login-box p { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; }
+        .login-box label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
+        .login-box input, .login-box select {
+            width: 100%; background: #0a0f1a; border: 1px solid var(--border); color: var(--text);
+            padding: 12px; border-radius: 8px; margin-bottom: 12px;
+        }
+        .login-box button {
+            width: 100%; padding: 12px; border: none; border-radius: 8px;
+            background: linear-gradient(135deg, #06b6d4, #6366f1); color: #fff;
+            font-weight: 700; cursor: pointer; margin-top: 6px;
+        }
+        .role-hint { font-size: 0.75rem; color: #64748b; margin-top: 12px; line-height: 1.4; }
+        #app { display: none; }
+        header {
+            height: 52px; background: #0a0f1a; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
+            position: sticky; top: 0; z-index: 1000;
+        }
+        .brand { display: flex; align-items: center; gap: 8px; }
+        .logo {
+            width: 32px; height: 32px; border-radius: 8px;
+            background: linear-gradient(135deg, #06b6d4, #6366f1);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .logo svg { width: 16px; height: 16px; }
+        .brand strong { font-size: 1rem; }
+        .brand strong span { color: var(--accent); }
+        .user-chip { font-size: 0.72rem; color: var(--muted); text-align: right; }
+        .user-chip b { color: var(--text); display: block; }
+        .bottom-nav {
+            position: fixed; bottom: 0; left: 0; right: 0; height: 58px;
+            background: #0a0f1a; border-top: 1px solid var(--border);
+            display: flex; z-index: 1000;
+        }
+        .bottom-nav button {
+            flex: 1; background: none; border: none; color: var(--muted);
+            font-size: 0.55rem; padding: 4px 1px; cursor: pointer;
+            display: flex; flex-direction: column; align-items: center; gap: 1px;
+        }
+        .bottom-nav button.active { color: var(--accent); }
+        .bottom-nav button span.icon { font-size: 1.1rem; }
+        main { padding: 12px 12px 72px; max-width: 1100px; margin: 0 auto; }
+        .page { display: none; }
+        .page.active { display: block; }
+        .badge {
+            font-size: 0.62rem; font-weight: 700; padding: 2px 7px; border-radius: 20px;
+            text-transform: uppercase;
+        }
+        .badge.ok { background: #14532d; color: #4ade80; }
+        .badge.warn { background: #713f12; color: #facc15; }
+        .badge.alarm { background: #7f1d1d; color: #f87171; }
+        .badge.pm { background: #4c1d95; color: #c4b5fd; }
+        .badge.paid { background: #14532d; color: #86efac; }
+        .badge.unpaid { background: #7f1d1d; color: #fca5a5; }
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+            padding: 10px 14px; border-radius: 8px; border: none; font-weight: 600;
+            cursor: pointer; font-size: 0.85rem;
+        }
+        .btn-primary { background: linear-gradient(135deg, #06b6d4, #6366f1); color: #fff; }
+        .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+        .btn-ok { background: #14532d; color: #86efac; }
+        .btn-sm { padding: 6px 10px; font-size: 0.75rem; }
+        .btn-block { width: 100%; }
+        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        .card {
+            background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+            padding: 14px; margin-bottom: 10px;
+        }
+        .card h3 { font-size: 0.95rem; margin-bottom: 4px; }
+        .card .meta { font-size: 0.75rem; color: var(--muted); }
+        .kpi-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+        @media (min-width: 600px) { .kpi-row { grid-template-columns: repeat(4, 1fr); } }
+        .kpi {
+            background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+            padding: 12px; text-align: center;
+        }
+        .kpi .v { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+        .kpi .l { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+        #map { height: 280px; border-radius: 12px; border: 1px solid var(--border); z-index: 1; }
+        @media (min-width: 768px) { #map { height: 380px; } }
+        .map-legend {
+            display: flex; gap: 10px; flex-wrap: wrap; font-size: 0.72rem; margin: 8px 0 12px; color: var(--muted);
+        }
+        .map-legend i {
+            display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px;
+        }
+        .search {
+            width: 100%; background: #0a0f1a; border: 1px solid var(--border); color: var(--text);
+            padding: 10px 12px; border-radius: 8px; margin-bottom: 10px;
+        }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%; background: #0a0f1a; border: 1px solid var(--border); color: var(--text);
+            padding: 10px 12px; border-radius: 8px;
+        }
+        .form-group textarea { min-height: 80px; resize: vertical; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .check-list { list-style: none; }
+        .check-list li {
+            display: flex; align-items: flex-start; gap: 10px;
+            padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem;
+        }
+        .check-list input[type=checkbox] {
+            width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); flex-shrink: 0;
+        }
+        .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+        .photo-grid img {
+            width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid var(--border);
+        }
+        .photo-add {
+            aspect-ratio: 1; border: 1px dashed var(--border); border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; color: var(--muted);
+            font-size: 0.75rem; cursor: pointer; text-align: center; padding: 8px;
+        }
+        .modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+            display: none; align-items: flex-end; justify-content: center; z-index: 2000;
+        }
+        @media (min-width: 640px) { .modal-overlay { align-items: center; } }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 16px 16px 0 0; width: 100%; max-width: 520px;
+            max-height: 92vh; overflow-y: auto; padding: 18px;
+        }
+        @media (min-width: 640px) { .modal { border-radius: 16px; } }
+        .modal h3 { margin-bottom: 12px; font-size: 1.05rem; }
+        .modal-actions { display: flex; gap: 8px; margin-top: 14px; }
+        .modal-actions .btn { flex: 1; }
+        .section-title { font-size: 0.8rem; color: var(--accent); font-weight: 600; margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.4px; }
+        .empty { color: #64748b; font-size: 0.85rem; padding: 16px 0; text-align: center; }
+        .maint-due { color: #fdba74; } .maint-ok { color: #4ade80; }
+        .leaflet-popup-content-wrapper { background: #111827; color: #e2e8f0; border-radius: 8px; }
+        .leaflet-popup-tip { background: #111827; }
+        .tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+        .tabs button {
+            background: #0a0f1a; border: 1px solid var(--border); color: var(--muted);
+            padding: 7px 12px; border-radius: 20px; font-size: 0.78rem; cursor: pointer;
+        }
+        .tabs button.active { border-color: var(--accent); color: var(--accent); }
+    </style>
+</head>
+<body>
+    <div id="login-screen">
+        <div class="login-box">
+            <h1>Help<span>AS</span></h1>
+            <p>Asansör saha &amp; PM sistemi</p>
+            <div id="login-form">
+                <label>Kullanıcı adı</label>
+                <input id="login-user" placeholder="kullanıcı adı" autocomplete="username">
+                <label>Şifre</label>
+                <input id="login-pass" type="password" placeholder="şifre" autocomplete="current-password">
+                <button onclick="doLogin()">Giriş Yap</button>
+                <button type="button" class="btn-link" onclick="showResetRequest()" style="margin-top:10px;width:100%;background:transparent;border:1px solid #334155;color:#94a3b8;padding:10px;border-radius:8px;cursor:pointer;font-size:0.85rem">Şifremi unuttum / sıfırlama talebi</button>
+                <p class="role-hint" id="login-error" style="color:#f87171;display:none"></p>
+                <p class="role-hint">
+                    Admin: <b>admin</b> / SabriAltan123<br>
+                    API: hepas-api (Neon) · yoksa yerel giriş çalışır
+                </p>
+                <p class="role-hint" id="api-status" style="color:#64748b">API kontrol ediliyor…</p>
+            </div>
+            <div id="reset-form" style="display:none">
+                <label>Kullanıcı adınız</label>
+                <input id="reset-user" placeholder="kullanıcı adı">
+                <label>WhatsApp numaranız (5xx...)</label>
+                <input id="reset-wa" placeholder="5xxxxxxxxx">
+                <button onclick="requestPasswordReset()">Sıfırlama talebi oluştur</button>
+                <button type="button" onclick="hideResetRequest()" style="margin-top:8px;width:100%;background:transparent;border:1px solid #334155;color:#94a3b8;padding:10px;border-radius:8px;cursor:pointer">Geri</button>
+                <p class="role-hint" id="reset-msg"></p>
+            </div>
+        </div>
+    </div>
+
+    <div id="app">
+        <header>
+            <div class="brand">
+                <div class="logo">
+                    <svg viewBox="0 0 24 24" fill="none"><rect x="7" y="4" width="10" height="16" rx="1.5" stroke="white" stroke-width="1.8"/><line x1="9" y1="8" x2="15" y2="8" stroke="white" stroke-width="1.3"/><line x1="9" y1="12" x2="15" y2="12" stroke="white" stroke-width="1.3"/></svg>
+                </div>
+                <strong>Help<span>AS</span></strong>
+            </div>
+            <div class="user-chip">
+                <b id="ui-user">—</b>
+                <span id="ui-role">—</span>
+            </div>
+        </header>
+
+        <main>
+            <div class="page active" id="page-jobs">
+                <div class="kpi-row">
+                    <div class="kpi"><div class="v" id="kpi-open">0</div><div class="l">Açık İş</div></div>
+                    <div class="kpi"><div class="v" id="kpi-pm" style="color:#a78bfa">0</div><div class="l">PM Bekleyen</div></div>
+                    <div class="kpi"><div class="v" id="kpi-fault" style="color:#ef4444">0</div><div class="l">Arıza</div></div>
+                    <div class="kpi"><div class="v" id="kpi-unpaid" style="color:#fbbf24">0</div><div class="l">Ödeme Bekleyen</div></div>
+                </div>
+                <div class="tabs">
+                    <button class="active" data-filter="all" onclick="setJobFilter('all',this)">Tümü</button>
+                    <button data-filter="pm" onclick="setJobFilter('pm',this)">PM</button>
+                    <button data-filter="fault" onclick="setJobFilter('fault',this)">Arıza</button>
+                    <button data-filter="open" onclick="setJobFilter('open',this)">Açık</button>
+                </div>
+                <div id="jobs-list"></div>
+            </div>
+
+            <div class="page" id="page-map">
+                <div class="map-legend">
+                    <span><i style="background:#22c55e"></i> Faal</span>
+                    <span><i style="background:#eab308"></i> PM Yakın</span>
+                    <span><i style="background:#ef4444"></i> Arıza</span>
+                    <span><i style="background:#3b82f6"></i> Personel işte</span>
+                    <span><i style="background:#64748b"></i> Offline</span>
+                </div>
+                <div id="map"></div>
+                <div id="map-list" style="margin-top:12px"></div>
+            </div>
+
+            <div class="page" id="page-form">
+                <p class="empty" id="form-placeholder">İş listesinden bir kayıt seçip “Form Aç” deyin.</p>
+                <div id="form-area" style="display:none"></div>
+            </div>
+
+            <div class="page" id="page-pm">
+                <div class="btn-row" style="margin-bottom:12px">
+                    <button class="btn btn-primary btn-sm" onclick="openContractModal()">+ Bakım Sözleşmesi</button>
+                    <button class="btn btn-ghost btn-sm" onclick="openEquipModal()">+ Ekipman</button>
+                </div>
+                <div class="section-title">Bakım Sözleşmeleri</div>
+                <div id="contracts-list"></div>
+                <div class="section-title">PM Planı / İş Emirleri</div>
+                <div id="pm-list"></div>
+            </div>
+
+            <div class="page" id="page-pay">
+                <div id="pay-list"></div>
+            </div>
+
+
+            <div class="page" id="page-account">
+                <div class="kpi-row">
+                    <div class="kpi"><div class="v" id="acc-in" style="color:#4ade80">0</div><div class="l">Tahsilat (₺)</div></div>
+                    <div class="kpi"><div class="v" id="acc-contract" style="color:#22d3ee">0</div><div class="l">Sözleşme / ay</div></div>
+                    <div class="kpi"><div class="v" id="acc-unpaid" style="color:#fbbf24">0</div><div class="l">Bekleyen (₺)</div></div>
+                    <div class="kpi"><div class="v" id="acc-jobs">0</div><div class="l">Tamam İş</div></div>
+                </div>
+                <div class="section-title">Gelir kayıtları (ödemeler)</div>
+                <div id="acc-payments"></div>
+                <div class="section-title">Sözleşme gelirleri (aylık)</div>
+                <div id="acc-contracts"></div>
+                <div class="section-title">İş gücü özeti</div>
+                <div id="acc-labor"></div>
+            </div>
+
+            <div class="page" id="page-crew">
+                <div class="section-title">Saha ekibi — kim nerede?</div>
+                <p style="font-size:0.8rem;color:var(--muted);margin-bottom:10px">
+                    Personel, üstlendiği açık işin asansör konumunda haritada görünür.
+                </p>
+                <div id="crew-list"></div>
+                <div class="section-title">Bugünkü / açık iş dağılımı</div>
+                <div id="crew-jobs"></div>
+            </div>
+
+            <div class="page" id="page-more">
+                <div class="section-title">Hesabım</div>
+                <div class="card" id="account-card"></div>
+                <div id="admin-users-section" style="display:none">
+                    <div class="section-title">Kullanıcı yönetimi (Admin)</div>
+                    <div class="btn-row" style="margin-bottom:10px">
+                        <button class="btn btn-primary btn-sm" onclick="openUserModal()">+ Kullanıcı</button>
+                    </div>
+                    <div id="users-list"></div>
+                    <div class="section-title">Bekleyen şifre sıfırlama talepleri</div>
+                    <div id="reset-requests-list"></div>
+                </div>
+                <div class="section-title">Ekipmanlar</div>
+                <input class="search" id="equip-search" placeholder="Ara...">
+                <div id="equip-list"></div>
+                <div class="section-title">Müşteriler (CRM)</div>
+                <div id="crm-list"></div>
+                <div class="btn-row">
+                    <button class="btn btn-ghost btn-sm" onclick="openCustomerModal()">+ Müşteri</button>
+                    <button class="btn btn-ghost btn-sm" onclick="doLogout()">Çıkış</button>
+                </div>
+            </div>
+        </main>
+
+        <nav class="bottom-nav" id="bottom-nav">
+            <button class="active" data-page="jobs"><span class="icon">📋</span>İşler</button>
+            <button data-page="map"><span class="icon">🗺️</span>Harita</button>
+            <button data-page="form"><span class="icon">✅</span>Form</button>
+            <button data-page="pm"><span class="icon">🔧</span>PM</button>
+            <button data-page="pay"><span class="icon">💳</span>Ödeme</button>
+            <button data-page="account"><span class="icon">📒</span>Muhasebe</button>
+            <button data-page="crew"><span class="icon">👷</span>Ekip</button>
+            <button data-page="more"><span class="icon">⋯</span>Diğer</button>
+        </nav>
+    </div>
+
+    <div class="modal-overlay" id="contract-modal">
+        <div class="modal">
+            <h3>Bakım Sözleşmesi + PM Planı</h3>
+            <div class="form-group"><label>Müşteri *</label><select id="ct-customer"></select></div>
+            <div class="form-group"><label>Ekipman (asansör) *</label><select id="ct-equip"></select></div>
+            <div class="form-row">
+                <div class="form-group"><label>Başlangıç *</label><input type="date" id="ct-start"></div>
+                <div class="form-group"><label>Bitiş *</label><input type="date" id="ct-end"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Aylık bedel (₺) *</label><input type="number" id="ct-fee" placeholder="15000"></div>
+                <div class="form-group"><label>PM periyodu (ay) *</label><input type="number" id="ct-period" value="3" min="1"></div>
+            </div>
+            <div class="form-group"><label>Kapsam</label><input id="ct-scope" placeholder="Full bakım, parça hariç..."></div>
+            <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px">
+                Kaydedince seçilen ekipmana PM periyoduna göre otomatik bakım planı (iş emirleri) oluşturulur.
+            </p>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('contract-modal')">İptal</button>
+                <button class="btn btn-primary" onclick="saveContract()">Kaydet + Plan Oluştur</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="equip-modal">
+        <div class="modal" style="max-width:560px">
+            <h3>Asansör / Ekipman</h3>
+            <div class="form-group"><label>Ad *</label><input id="eq-name"></div>
+            <div class="form-group"><label>Konum (adres / site) *</label><input id="eq-loc"></div>
+            <div class="form-group"><label>Müşteri</label><select id="eq-cust"></select></div>
+            <div class="form-row">
+                <div class="form-group"><label>Marka</label><input id="eq-brand"></div>
+                <div class="form-group"><label>Model</label><input id="eq-model"></div>
+            </div>
+            <div class="section-title" style="margin-top:8px">GPS — haritadan seçin</div>
+            <p style="font-size:0.75rem;color:#64748b;margin-bottom:6px">Haritaya tıklayın; enlem/boylam otomatik dolar.</p>
+            <div id="eq-pick-map" style="height:200px;border-radius:10px;border:1px solid #1e293b;margin-bottom:8px;z-index:1"></div>
+            <div class="form-row">
+                <div class="form-group"><label>Enlem (Latitude)</label><input type="number" step="any" id="eq-lat" value="41.02"></div>
+                <div class="form-group"><label>Boylam (Longitude)</label><input type="number" step="any" id="eq-lng" value="29.02"></div>
+            </div>
+            <div class="section-title">SCADA / Cihaz linkleme</div>
+            <p style="font-size:0.75rem;color:#64748b;margin-bottom:6px">IoT gateway (asansöre takılan kutu) bu Device ID ile MQTT üzerinden bağlanır.</p>
+            <div class="form-row">
+                <div class="form-group"><label>Device ID *</label><input id="eq-device" placeholder="dev-plaza-a1"></div>
+                <div class="form-group"><label>Cihaz token (gizli anahtar)</label><input id="eq-token" placeholder="Otomatik üretilebilir"></div>
+            </div>
+            <div class="form-group"><label>MQTT topic (opsiyonel)</label><input id="eq-topic" placeholder="helpas/v1/{site}/{device}/telemetry"></div>
+            <div class="form-row">
+                <div class="form-group"><label>PM periyodu (ay)</label><input type="number" id="eq-period" value="3"></div>
+                <div class="form-group"><label>Sonraki PM</label><input type="date" id="eq-next"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('equip-modal')">İptal</button>
+                <button class="btn btn-primary" onclick="saveEquip()">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="customer-modal">
+        <div class="modal">
+            <h3>Müşteri</h3>
+            <div class="form-group"><label>Firma / Site *</label><input id="cu-name"></div>
+            <div class="form-group"><label>Yetkili</label><input id="cu-contact"></div>
+            <div class="form-group"><label>Telefon</label><input id="cu-phone"></div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('customer-modal')">İptal</button>
+                <button class="btn btn-primary" onclick="saveCustomer()">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="user-modal">
+        <div class="modal">
+            <h3>Yeni kullanıcı</h3>
+            <div class="form-group"><label>Kullanıcı adı *</label><input id="nu-username" autocomplete="off"></div>
+            <div class="form-group"><label>Ad Soyad *</label><input id="nu-name"></div>
+            <div class="form-group"><label>Rol *</label>
+                <select id="nu-role">
+                    <option value="saha">Saha Personeli</option>
+                    <option value="admin">Yönetici</option>
+                </select>
+            </div>
+            <div class="form-group"><label>WhatsApp (5xx...)</label><input id="nu-wa" placeholder="5xxxxxxxxx"></div>
+            <div class="form-group"><label>Geçici şifre *</label><input id="nu-pass" value=""></div>
+            <p style="font-size:0.75rem;color:#64748b;margin-bottom:8px">Kullanıcı ilk girişte şifresini değiştirebilir. İsterseniz WhatsApp ile gönderin.</p>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('user-modal')">İptal</button>
+                <button class="btn btn-primary" onclick="saveUser()">Oluştur</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="pass-modal">
+        <div class="modal">
+            <h3>Şifre değiştir</h3>
+            <div class="form-group"><label>Mevcut şifre</label><input type="password" id="cp-old"></div>
+            <div class="form-group"><label>Yeni şifre</label><input type="password" id="cp-new"></div>
+            <div class="form-group"><label>Yeni şifre (tekrar)</label><input type="password" id="cp-new2"></div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('pass-modal')">İptal</button>
+                <button class="btn btn-primary" onclick="changePassword()">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const PM_CHECKLIST = [
+            "Makine dairesi / şaft genel kontrol",
+            "Motor ve redüktör yağ seviyesi / kaçak",
+            "Fren sistemi kontrolü",
+            "Kapı operatörü ve kilitler",
+            "Kat kapıları güvenlik kontakları",
+            "Kablo ve ray yağlama / temizlik",
+            "Kumanda panosu terminaller / ısınma",
+            "Acil aydınlatma ve alarm butonu testi",
+            "Stop butonu ve güvenlik zinciri",
+            "Kabin içi butonlar ve gösterge",
+            "Kat hizalama kontrolü",
+            "Genel temizlik ve etiketler"
+        ];
+        const FAULT_CHECKLIST = [
+            "Arıza kodu / panel mesajı kaydedildi",
+            "Güvenlik zinciri kontrol edildi",
+            "Kapı ve kilit mekanizması",
+            "Motor / sürücü kontrolü",
+            "Besleme voltajı ölçüldü",
+            "Kabin ve kat butonları",
+            "Acil kurtarma prosedürü uygulandı (gerekirse)",
+            "Yedek parça değiştirildi (varsa not)",
+            "Test sürüşü yapıldı",
+            "Müşteri bilgilendirildi"
+        ];
+
+        let currentUser = null; // { username, name, role, wa }
+        let jobFilter = "all";
+        let activeJobId = null;
+        let map, markersLayer, pickMap, pickMarker;
+
+        // --- Kullanıcı / şifre (tarayıcıda saklanır: localStorage) ---
+        const ADMIN_DEFAULT = { username: "admin", name: "Sabri Altan", role: "admin", password: "SabriAltan123", wa: "" };
+        // Cloudflare API Worker (Neon bu adreste)
+        const API_BASE = "https://helpas-db.tr-sabri-altan.workers.dev";
+
+
+        function loadUsers() {
+            try {
+                const raw = localStorage.getItem("helpas_users");
+                if (!raw) {
+                    const seed = [ADMIN_DEFAULT];
+                    localStorage.setItem("helpas_users", JSON.stringify(seed));
+                    return seed.slice();
+                }
+                return JSON.parse(raw);
+            } catch(e) { return [Object.assign({}, ADMIN_DEFAULT)]; }
+        }
+        function saveUsers(list) {
+            localStorage.setItem("helpas_users", JSON.stringify(list));
+        }
+        function loadResetRequests() {
+            try { return JSON.parse(localStorage.getItem("helpas_resets") || "[]"); }
+            catch(e) { return []; }
+        }
+        function saveResetRequests(list) {
+            localStorage.setItem("helpas_resets", JSON.stringify(list));
+        }
+        function genTempPass() {
+            return "Ha" + Math.random().toString(36).slice(2, 8) + "9";
+        }
+        function waLink(phone, text) {
+            let p = String(phone || "").replace(/\D/g, "");
+            if (p.startsWith("0")) p = "90" + p.slice(1);
+            if (p.length === 10) p = "90" + p;
+            return "https://wa.me/" + p + "?text=" + encodeURIComponent(text);
+        }
+        (function ensureAdmin() {
+            const users = loadUsers();
+            let admin = users.find(x => x.username === "admin");
+            if (!admin) {
+                users.unshift(Object.assign({}, ADMIN_DEFAULT));
+                saveUsers(users);
+                localStorage.setItem("helpas_admin_bootstrapped", "1");
+            } else if (!localStorage.getItem("helpas_admin_bootstrapped")) {
+                // İlk kurulum: istenen admin şifresini uygula (sonra kullanıcı değiştirebilir)
+                admin.password = "SabriAltan123";
+                admin.role = "admin";
+                admin.name = admin.name || "Sabri Altan";
+                saveUsers(users);
+                localStorage.setItem("helpas_admin_bootstrapped", "1");
+            }
+        })();
+
+        let customers = [
+            { id:"c1", name:"Plaza A Yönetimi", contact:"Ayşe Demir", phone:"0532 111 2233" },
+            { id:"c2", name:"İş Merkezi B A.Ş.", contact:"Can Öztürk", phone:"0533 444 5566" },
+            { id:"c3", name:"Residence C Site", contact:"Elif Kaya", phone:"0535 777 8899" }
+        ];
+        // İş gücü (saha personeli). Konum = üstlendikleri açık işin asansör GPS'i
+        let technicians = [
+            { id:"t1", name:"Ahmet Yılmaz", phone:"0532 100 0001", active:true },
+            { id:"t2", name:"Mehmet Kaya", phone:"0532 100 0002", active:true },
+            { id:"t3", name:"Can Demir", phone:"0532 100 0003", active:true }
+        ];
+        let equipment = [
+            { id:"eq-001", name:"Plaza A - A1", location:"Kadıköy / Plaza A", customerId:"c1", brand:"Otis", model:"Gen2", lat:40.9901, lng:29.0292, period:3, nextMaint:"2026-09-12", status:"ok", online:true, floor:7, deviceId:"dev-pa1", deviceToken:"tok_demo_pa1", mqttTopic:"helpas/v1/site/dev-pa1/telemetry" },
+            { id:"eq-002", name:"Plaza A - A2", location:"Kadıköy / Plaza A", customerId:"c1", brand:"Otis", model:"Gen2", lat:40.9903, lng:29.0295, period:3, nextMaint:"2026-08-20", status:"alarm", online:true, floor:3, alarm:"Kapı Arızası", deviceId:"dev-pa2", deviceToken:"tok_demo_pa2", mqttTopic:"helpas/v1/site/dev-pa2/telemetry" },
+            { id:"eq-003", name:"İş Merkezi B - A1", location:"Şişli", customerId:"c2", brand:"Schindler", model:"3300", lat:41.0602, lng:28.9877, period:3, nextMaint:"2026-10-01", status:"ok", online:true, floor:12, deviceId:"dev-ib1", deviceToken:"tok_demo_ib1", mqttTopic:"helpas/v1/site/dev-ib1/telemetry" },
+            { id:"eq-004", name:"İş Merkezi B - A2", location:"Şişli", customerId:"c2", brand:"Schindler", model:"3300", lat:41.0605, lng:28.9880, period:3, nextMaint:"2026-07-10", status:"warn", online:false, floor:5, alarm:"PM gecikti", deviceId:"dev-ib2", deviceToken:"tok_demo_ib2", mqttTopic:"helpas/v1/site/dev-ib2/telemetry" },
+            { id:"eq-005", name:"Residence C - 1", location:"Beşiktaş", customerId:"c3", brand:"Kone", model:"MonoSpace", lat:41.0422, lng:29.0067, period:3, nextMaint:"2026-11-05", status:"ok", online:true, floor:9, deviceId:"dev-rc1", deviceToken:"tok_demo_rc1", mqttTopic:"helpas/v1/site/dev-rc1/telemetry" }
+        ];
+        let contracts = [
+            { id:"ct1", customerId:"c1", equipId:"eq-001", start:"2024-01-01", end:"2026-12-31", fee:18500, period:3, scope:"Full bakım", status:"Aktif" },
+            { id:"ct2", customerId:"c1", equipId:"eq-002", start:"2024-01-01", end:"2026-12-31", fee:18500, period:3, scope:"Full bakım", status:"Aktif" }
+        ];
+        let jobs = [
+            { id:"j1", equipId:"eq-002", type:"fault", title:"Kapı arızası", date:"2026-09-04", status:"open", tech:"Ahmet Yılmaz", priority:"Acil", checklist:[], notes:"", photos:[], payment:{ received:false, amount:0, note:"" } },
+            { id:"j2", equipId:"eq-004", type:"pm", title:"Periyodik bakım (PM)", date:"2026-09-08", status:"open", tech:"Mehmet Kaya", priority:"Yüksek", checklist:[], notes:"", photos:[], payment:{ received:false, amount:0, note:"" } },
+            { id:"j3", equipId:"eq-001", type:"pm", title:"Periyodik bakım (PM)", date:"2026-09-12", status:"open", tech:"", priority:"Normal", checklist:[], notes:"", photos:[], payment:{ received:false, amount:0, note:"" } },
+            { id:"j4", equipId:"eq-003", type:"pm", title:"Periyodik bakım (PM)", date:"2026-08-28", status:"done", tech:"Mehmet Kaya", priority:"Normal", checklist: PM_CHECKLIST.map(t=>({text:t,done:true})), notes:"Normal", photos:[], payment:{ received:true, amount:0, note:"Sözleşme kapsamında" } }
+        ];
+
+        function finishLogin(found) {
+            currentUser = { username: found.username, name: found.name, role: found.role, wa: found.wa || "" };
+            document.getElementById("login-screen").style.display = "none";
+            document.getElementById("app").style.display = "block";
+            document.getElementById("ui-user").textContent = currentUser.name;
+            document.getElementById("ui-role").textContent = currentUser.role === "admin" ? "Yönetici (Admin)" : "Saha Personeli";
+            document.getElementById("login-pass").value = "";
+            renderAll();
+            setTimeout(initMap, 200);
+        }
+        async function doLogin() {
+            const u = document.getElementById("login-user").value.trim();
+            const p = document.getElementById("login-pass").value;
+            const err = document.getElementById("login-error");
+            err.style.display = "none";
+            // 1) Önce API Worker (Neon) dene
+            try {
+                const res = await fetch(API_BASE + "/api/login", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ username: u, password: p })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.ok && data.user) {
+                        finishLogin(data.user);
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn("API login yok, yerel giriş denenecek", e);
+            }
+            // 2) Yedek: tarayıcı localStorage
+            const users = loadUsers();
+            if (!users.find(x => x.username === "admin")) {
+                users.unshift(Object.assign({}, ADMIN_DEFAULT));
+                saveUsers(users);
+            }
+            const found = users.find(x => x.username === u && x.password === p);
+            if (!found) {
+                err.textContent = "Kullanıcı adı veya şifre hatalı.";
+                err.style.display = "block";
+                return;
+            }
+            finishLogin(found);
+        }
+        function doLogout() {
+            currentUser = null;
+            document.getElementById("app").style.display = "none";
+            document.getElementById("login-screen").style.display = "flex";
+            document.getElementById("login-form").style.display = "block";
+            document.getElementById("reset-form").style.display = "none";
+        }
+        function showResetRequest() {
+            document.getElementById("login-form").style.display = "none";
+            document.getElementById("reset-form").style.display = "block";
+            document.getElementById("reset-msg").textContent = "";
+        }
+        function hideResetRequest() {
+            document.getElementById("reset-form").style.display = "none";
+            document.getElementById("login-form").style.display = "block";
+        }
+        function requestPasswordReset() {
+            const username = document.getElementById("reset-user").value.trim();
+            const wa = document.getElementById("reset-wa").value.trim();
+            const msg = document.getElementById("reset-msg");
+            const users = loadUsers();
+            const found = users.find(x => x.username === username);
+            if (!found) {
+                msg.style.color = "#f87171";
+                msg.textContent = "Bu kullanıcı adı sistemde yok.";
+                return;
+            }
+            const temp = genTempPass();
+            found.password = temp;
+            if (wa) found.wa = wa;
+            saveUsers(users);
+            const reqs = loadResetRequests();
+            reqs.unshift({ username, name: found.name, wa: wa || found.wa || "", temp, at: new Date().toISOString(), done: true });
+            saveResetRequests(reqs);
+            const text = "HelpAS şifre sıfırlama\nKullanıcı: " + username + "\nYeni geçici şifre: " + temp + "\nGirişten sonra şifrenizi değiştirin.";
+            msg.style.color = "#4ade80";
+            if (wa || found.wa) {
+                const link = waLink(wa || found.wa, text);
+                msg.innerHTML = "Geçici şifre üretildi.<br><b>" + temp + "</b><br><a href=\"" + link + "\" target=\"_blank\" style=\"color:#22d3ee\">WhatsApp ile gönder</a>";
+                window.open(link, "_blank");
+            } else {
+                msg.innerHTML = "Geçici şifre: <b>" + temp + "</b> (WhatsApp no yok, not alın)";
+            }
+        }
+        function openUserModal() {
+            if (!currentUser || currentUser.role !== "admin") return;
+            document.getElementById("nu-username").value = "";
+            document.getElementById("nu-name").value = "";
+            document.getElementById("nu-role").value = "saha";
+            document.getElementById("nu-wa").value = "";
+            document.getElementById("nu-pass").value = genTempPass();
+            document.getElementById("user-modal").classList.add("open");
+        }
+        function saveUser() {
+            if (!currentUser || currentUser.role !== "admin") return;
+            const username = document.getElementById("nu-username").value.trim();
+            const name = document.getElementById("nu-name").value.trim();
+            const role = document.getElementById("nu-role").value;
+            const wa = document.getElementById("nu-wa").value.trim();
+            const password = document.getElementById("nu-pass").value;
+            if (!username || !name || !password) { alert("Kullanıcı adı, ad ve şifre gerekli"); return; }
+            const users = loadUsers();
+            if (users.find(x => x.username === username)) { alert("Bu kullanıcı adı var"); return; }
+            users.push({ username, name, role, password, wa });
+            saveUsers(users);
+            // technicians listesine saha ise ekle
+            if (role === "saha" && !technicians.find(t => t.name === name)) {
+                technicians.push({ id: "t"+Date.now(), name, phone: wa ? "0"+wa.replace(/\D/g,"").slice(-10) : "", active: true });
+            }
+            closeModal("user-modal");
+            if (wa) {
+                const text = "HelpAS hesabınız açıldı\nKullanıcı: " + username + "\nŞifre: " + password + "\nGirişten sonra şifrenizi değiştirmenizi öneririz.";
+                window.open(waLink(wa, text), "_blank");
+            }
+            alert("Kullanıcı oluşturuldu." + (wa ? " WhatsApp açıldı." : ""));
+            renderAll();
+        }
+        function adminResetUser(username) {
+            if (!currentUser || currentUser.role !== "admin") return;
+            const users = loadUsers();
+            const u = users.find(x => x.username === username);
+            if (!u) return;
+            const temp = genTempPass();
+            u.password = temp;
+            saveUsers(users);
+            const text = "HelpAS admin şifre sıfırlama\nKullanıcı: " + username + "\nYeni şifre: " + temp;
+            if (u.wa) window.open(waLink(u.wa, text), "_blank");
+            alert("Yeni şifre: " + temp + (u.wa ? " (WhatsApp açıldı)" : ""));
+            renderAll();
+        }
+        function changePassword() {
+            if (!currentUser) return;
+            const oldP = document.getElementById("cp-old").value;
+            const n1 = document.getElementById("cp-new").value;
+            const n2 = document.getElementById("cp-new2").value;
+            if (n1.length < 6) { alert("Yeni şifre en az 6 karakter"); return; }
+            if (n1 !== n2) { alert("Yeni şifreler eşleşmiyor"); return; }
+            const users = loadUsers();
+            const u = users.find(x => x.username === currentUser.username);
+            if (!u || u.password !== oldP) { alert("Mevcut şifre yanlış"); return; }
+            u.password = n1;
+            saveUsers(users);
+            closeModal("pass-modal");
+            alert("Şifre güncellendi.");
+        }
+
+        document.querySelectorAll(".bottom-nav button").forEach(btn => {
+            btn.addEventListener("click", () => {
+                document.querySelectorAll(".bottom-nav button").forEach(b => b.classList.remove("active"));
+                document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+                btn.classList.add("active");
+                document.getElementById("page-" + btn.dataset.page).classList.add("active");
+                if (btn.dataset.page === "map") setTimeout(() => { if (map) { map.invalidateSize(); fitMap(); } }, 150);
+            });
+        });
+        function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+
+        function eq(id) { return equipment.find(e => e.id === id); }
+        function cust(id) { return customers.find(c => c.id === id); }
+        function daysUntil(d) {
+            if (!d) return 999;
+            const x = new Date(d), t = new Date(); t.setHours(0,0,0,0);
+            return Math.ceil((x - t) / 86400000);
+        }
+        function mapColor(e) {
+            if (!e.online) return "#64748b";
+            if (e.status === "alarm") return "#ef4444";
+            if (e.status === "warn" || daysUntil(e.nextMaint) <= 14) return "#eab308";
+            return "#22c55e";
+        }
+
+        function initMap() {
+            if (map) return;
+            const el = document.getElementById("map");
+            if (!el) return;
+            map = L.map("map").setView([41.02, 29.02], 11);
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                attribution: "© OSM", maxZoom: 19
+            }).addTo(map);
+            markersLayer = L.layerGroup().addTo(map);
+            renderMap();
+        }
+        function renderMap() {
+            if (!markersLayer) return;
+            markersLayer.clearLayers();
+            equipment.forEach(e => {
+                const color = mapColor(e);
+                const icon = L.divIcon({
+                    className: "",
+                    html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px #000"></div>`,
+                    iconSize: [14,14], iconAnchor: [7,7]
+                });
+                const m = L.marker([e.lat, e.lng], { icon }).addTo(markersLayer);
+                const pm = daysUntil(e.nextMaint);
+                const onSite = jobs.filter(j => j.status==="open" && j.equipId===e.id && j.tech).map(j=>j.tech);
+                m.bindPopup(`<b>${e.name}</b><br>${e.location}<br>PM: ${e.nextMaint||"—"} (${pm}g)<br>${e.alarm||e.status}` +
+                    (onSite.length ? `<br><b style="color:#93c5fd">Personel: ${onSite.join(", ")}</b>` : ""));
+            });
+            // Personel işaretleri (üstlendikleri açık işin konumunda)
+            jobs.filter(j => j.status==="open" && j.tech).forEach(j => {
+                const e = eq(j.equipId);
+                if (!e) return;
+                const icon = L.divIcon({
+                    className: "",
+                    html: `<div style="background:#3b82f6;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 8px #3b82f6;display:flex;align-items:center;justify-content:center;font-size:10px">👷</div>`,
+                    iconSize: [18,18], iconAnchor: [9,9]
+                });
+                // hafif kaydırma ki asansör marker'ının üstüne binmesin
+                const m = L.marker([e.lat + 0.0015, e.lng + 0.0015], { icon }).addTo(markersLayer);
+                m.bindPopup(`<b>👷 ${j.tech}</b><br>İş: ${j.title}<br>Yer: ${e.name}<br>${e.location}`);
+            });
+            fitMap();
+            document.getElementById("map-list").innerHTML = equipment.map(e => {
+                const pm = daysUntil(e.nextMaint);
+                let tag = "Faal";
+                if (!e.online) tag = "Offline";
+                else if (e.status === "alarm") tag = "Arıza";
+                else if (pm <= 14) tag = "PM Yakın";
+                const crew = jobs.filter(j => j.status==="open" && j.equipId===e.id && j.tech).map(j=>j.tech);
+                return `<div class="card" style="padding:10px">
+                    <div style="display:flex;justify-content:space-between">
+                        <b style="font-size:0.88rem">${e.name}</b>
+                        <span class="badge ${e.status==="alarm"?"alarm":pm<=14?"warn":"ok"}">${tag}</span>
+                    </div>
+                    <div class="meta">${e.location} · PM: ${e.nextMaint||"—"}</div>
+                    ${crew.length?`<div class="meta" style="color:#93c5fd">👷 ${crew.join(", ")}</div>`:""}
+                </div>`;
+            }).join("");
+        }
+        function fitMap() {
+            if (!map || !equipment.length) return;
+            map.fitBounds(equipment.map(e => [e.lat, e.lng]), { padding: [30,30] });
+        }
+
+        function setJobFilter(f, el) {
+            jobFilter = f;
+            document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+            el.classList.add("active");
+            renderJobs();
+        }
+        function renderJobs() {
+            let list = [...jobs].sort((a,b) => a.date.localeCompare(b.date));
+            if (jobFilter === "pm") list = list.filter(j => j.type === "pm");
+            if (jobFilter === "fault") list = list.filter(j => j.type === "fault");
+            if (jobFilter === "open") list = list.filter(j => j.status === "open");
+
+            document.getElementById("kpi-open").textContent = jobs.filter(j => j.status === "open").length;
+            document.getElementById("kpi-pm").textContent = jobs.filter(j => j.type === "pm" && j.status === "open").length;
+            document.getElementById("kpi-fault").textContent = jobs.filter(j => j.type === "fault" && j.status === "open").length;
+            document.getElementById("kpi-unpaid").textContent = jobs.filter(j => j.status === "done" && !j.payment.received).length;
+
+            document.getElementById("jobs-list").innerHTML = list.length ? list.map(j => {
+                const e = eq(j.equipId);
+                const typeBadge = j.type === "pm" ? "pm" : "alarm";
+                const st = j.status === "done" ? "ok" : (j.type === "fault" ? "alarm" : "warn");
+                return `<div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                        <div>
+                            <h3>${j.title}</h3>
+                            <div class="meta">${e ? e.name : j.equipId} · ${e ? e.location : ""} · ${j.date}</div>
+                            <div class="meta" style="margin-top:4px">Öncelik: ${j.priority} ${j.tech ? "· "+j.tech : ""}</div>
+                        </div>
+                        <div style="text-align:right">
+                            <span class="badge ${typeBadge}">${j.type==="pm"?"PM":"Arıza"}</span><br>
+                            <span class="badge ${st}" style="margin-top:4px;display:inline-block">${j.status==="done"?"Tamam":"Açık"}</span>
+                        </div>
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn btn-primary btn-sm" onclick="openJobForm('${j.id}')">Form Aç</button>
+                        ${j.status==="open"?`<button class="btn btn-ghost btn-sm" onclick="assignMe('${j.id}')">Üstlen</button>`:""}
+                    </div>
+                </div>`;
+            }).join("") : `<div class="empty">Kayıt yok</div>`;
+        }
+
+        function assignMe(id) {
+            const j = jobs.find(x => x.id === id);
+            if (j) { j.tech = currentUser.name; renderJobs(); }
+        }
+
+        function openJobForm(id) {
+            activeJobId = id;
+            const j = jobs.find(x => x.id === id);
+            if (!j) return;
+            if (!j.checklist.length) {
+                const src = j.type === "pm" ? PM_CHECKLIST : FAULT_CHECKLIST;
+                j.checklist = src.map(t => ({ text: t, done: false }));
+            }
+            document.querySelectorAll(".bottom-nav button").forEach(b => b.classList.remove("active"));
+            document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+            document.querySelector('[data-page="form"]').classList.add("active");
+            document.getElementById("page-form").classList.add("active");
+            renderForm();
+        }
+
+        function renderForm() {
+            const j = jobs.find(x => x.id === activeJobId);
+            const ph = document.getElementById("form-placeholder");
+            const area = document.getElementById("form-area");
+            if (!j) {
+                ph.style.display = "block";
+                area.style.display = "none";
+                return;
+            }
+            ph.style.display = "none";
+            area.style.display = "block";
+            const e = eq(j.equipId);
+            const locked = j.status === "done";
+
+            area.innerHTML = `
+                <div class="card">
+                    <h3>${j.title}</h3>
+                    <div class="meta">${e?e.name:""} · ${e?e.location:""} · ${j.date}</div>
+                    <div class="meta">Teknisyen: ${j.tech||"—"} · ${j.status==="done"?"Tamamlandı":"Açık"}</div>
+                </div>
+                <div class="section-title">${j.type==="pm"?"PM Bakım Formu":"Arıza Formu"} (tikleyin)</div>
+                <div class="card">
+                    <ul class="check-list">
+                        ${j.checklist.map((c,i)=>`
+                            <li>
+                                <input type="checkbox" ${c.done?"checked":""} ${locked?"disabled":""}
+                                    onchange="toggleCheck(${i}, this.checked)">
+                                <span>${c.text}</span>
+                            </li>
+                        `).join("")}
+                    </ul>
+                </div>
+                <div class="section-title">Açıklama / Yapılan işlem</div>
+                <div class="form-group">
+                    <textarea id="f-notes" ${locked?"disabled":""} placeholder="Ne yapıldı, hangi parça değişti...">${j.notes||""}</textarea>
+                </div>
+                <div class="section-title">Fotoğraflar</div>
+                <div class="photo-grid">
+                    ${j.photos.map((src,i)=>`<img src="${src}" alt="foto" onclick="if(confirm('Sil?')){removePhoto(${i})}">`).join("")}
+                    ${!locked?`<label class="photo-add">+ Foto
+                        <input type="file" accept="image/*" capture="environment" style="display:none" onchange="addPhoto(event)">
+                    </label>`:""}
+                </div>
+                <div class="section-title">Ödeme</div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>Ödeme alındı mı?</label>
+                        <select id="f-paid" ${locked?"disabled":""}>
+                            <option value="no" ${!j.payment.received?"selected":""}>Hayır / Sözleşme kapsamında</option>
+                            <option value="yes" ${j.payment.received?"selected":""}>Evet, alındı</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Tutar (₺)</label>
+                            <input type="number" id="f-amount" value="${j.payment.amount||0}" ${locked?"disabled":""}>
+                        </div>
+                        <div class="form-group">
+                            <label>Ödeme notu</label>
+                            <input id="f-paynote" value="${j.payment.note||""}" ${locked?"disabled":""} placeholder="Nakit / EFT / sözleşme">
+                        </div>
+                    </div>
+                </div>
+                ${!locked ? `
+                <div class="btn-row">
+                    <button class="btn btn-ghost btn-block" onclick="saveFormDraft()">Taslak Kaydet</button>
+                    <button class="btn btn-ok btn-block" onclick="completeJob()">Servisi Tamamla</button>
+                </div>` : `<div class="empty">Bu iş tamamlanmış.</div>`}
+            `;
+        }
+
+        function toggleCheck(i, val) {
+            const j = jobs.find(x => x.id === activeJobId);
+            if (j) j.checklist[i].done = val;
+        }
+        function addPhoto(ev) {
+            const file = ev.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                const j = jobs.find(x => x.id === activeJobId);
+                if (j) { j.photos.push(reader.result); renderForm(); }
+            };
+            reader.readAsDataURL(file);
+        }
+        function removePhoto(i) {
+            const j = jobs.find(x => x.id === activeJobId);
+            if (j) { j.photos.splice(i,1); renderForm(); }
+        }
+        function saveFormDraft() {
+            const j = jobs.find(x => x.id === activeJobId);
+            if (!j) return;
+            j.notes = document.getElementById("f-notes").value;
+            j.payment.received = document.getElementById("f-paid").value === "yes";
+            j.payment.amount = parseFloat(document.getElementById("f-amount").value) || 0;
+            j.payment.note = document.getElementById("f-paynote").value;
+            if (!j.tech) j.tech = currentUser.name;
+            alert("Taslak kaydedildi.");
+            renderAll();
+        }
+        function completeJob() {
+            const j = jobs.find(x => x.id === activeJobId);
+            if (!j) return;
+            j.notes = document.getElementById("f-notes").value;
+            j.payment.received = document.getElementById("f-paid").value === "yes";
+            j.payment.amount = parseFloat(document.getElementById("f-amount").value) || 0;
+            j.payment.note = document.getElementById("f-paynote").value;
+            j.tech = j.tech || currentUser.name;
+            j.status = "done";
+            if (j.type === "pm") {
+                const e = eq(j.equipId);
+                if (e) {
+                    const n = new Date(j.date);
+                    n.setMonth(n.getMonth() + (e.period || 3));
+                    e.nextMaint = n.toISOString().slice(0,10);
+                    if (e.status === "warn") e.status = "ok";
+                }
+            }
+            if (j.type === "fault") {
+                const e = eq(j.equipId);
+                if (e && e.status === "alarm") { e.status = "ok"; e.alarm = null; }
+            }
+            alert("Servis tamamlandı.");
+            renderAll();
+            renderForm();
+        }
+
+        function openContractModal() {
+            document.getElementById("ct-customer").innerHTML = customers.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+            document.getElementById("ct-equip").innerHTML = equipment.map(e => `<option value="${e.id}">${e.name}</option>`).join("");
+            document.getElementById("ct-start").value = new Date().toISOString().slice(0,10);
+            const end = new Date(); end.setFullYear(end.getFullYear()+1);
+            document.getElementById("ct-end").value = end.toISOString().slice(0,10);
+            document.getElementById("ct-fee").value = "";
+            document.getElementById("ct-period").value = 3;
+            document.getElementById("ct-scope").value = "Full bakım";
+            document.getElementById("contract-modal").classList.add("open");
+        }
+        function saveContract() {
+            const customerId = document.getElementById("ct-customer").value;
+            const equipId = document.getElementById("ct-equip").value;
+            const start = document.getElementById("ct-start").value;
+            const end = document.getElementById("ct-end").value;
+            const fee = parseFloat(document.getElementById("ct-fee").value) || 0;
+            const period = parseInt(document.getElementById("ct-period").value) || 3;
+            const scope = document.getElementById("ct-scope").value;
+            if (!start || !end || !fee) { alert("Tarih ve fiyat gerekli"); return; }
+
+            contracts.push({
+                id: "ct"+Date.now(), customerId, equipId, start, end, fee, period, scope, status:"Aktif"
+            });
+            const e = eq(equipId);
+            if (e) {
+                e.period = period;
+                e.customerId = customerId;
+                const n = new Date(start);
+                n.setMonth(n.getMonth() + period);
+                e.nextMaint = n.toISOString().slice(0,10);
+            }
+            let d = new Date(start);
+            d.setMonth(d.getMonth() + period);
+            const endD = new Date(end);
+            let count = 0;
+            while (d <= endD && count < 24) {
+                const ds = d.toISOString().slice(0,10);
+                jobs.push({
+                    id: "j"+Date.now()+count,
+                    equipId, type: "pm", title: "Periyodik bakım (PM)", date: ds,
+                    status: "open", tech: "", priority: "Normal",
+                    checklist: [], notes: "", photos: [],
+                    payment: { received: false, amount: 0, note: "Sözleşme kapsamında" }
+                });
+                d.setMonth(d.getMonth() + period);
+                count++;
+            }
+            closeModal("contract-modal");
+            alert("Sözleşme kaydedildi. " + count + " adet PM iş emri oluşturuldu.");
+            renderAll();
+        }
+
+        function openEquipModal() {
+            document.getElementById("eq-name").value = "";
+            document.getElementById("eq-loc").value = "";
+            document.getElementById("eq-cust").innerHTML = customers.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+            document.getElementById("eq-brand").value = "";
+            document.getElementById("eq-model").value = "";
+            document.getElementById("eq-lat").value = 41.02;
+            document.getElementById("eq-lng").value = 29.02;
+            document.getElementById("eq-period").value = 3;
+            document.getElementById("eq-next").value = "";
+            document.getElementById("eq-device").value = "dev-" + Date.now().toString(36);
+            document.getElementById("eq-token").value = "tok_" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+            document.getElementById("eq-topic").value = "";
+            document.getElementById("equip-modal").classList.add("open");
+            setTimeout(initPickMap, 200);
+        }
+        function initPickMap() {
+            const el = document.getElementById("eq-pick-map");
+            if (!el) return;
+            const lat = parseFloat(document.getElementById("eq-lat").value) || 41.02;
+            const lng = parseFloat(document.getElementById("eq-lng").value) || 29.02;
+            if (pickMap) {
+                pickMap.remove();
+                pickMap = null;
+                pickMarker = null;
+            }
+            pickMap = L.map("eq-pick-map").setView([lat, lng], 12);
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(pickMap);
+            pickMarker = L.marker([lat, lng], { draggable: true }).addTo(pickMap);
+            pickMarker.on("dragend", function() {
+                const p = pickMarker.getLatLng();
+                document.getElementById("eq-lat").value = p.lat.toFixed(6);
+                document.getElementById("eq-lng").value = p.lng.toFixed(6);
+            });
+            pickMap.on("click", function(ev) {
+                pickMarker.setLatLng(ev.latlng);
+                document.getElementById("eq-lat").value = ev.latlng.lat.toFixed(6);
+                document.getElementById("eq-lng").value = ev.latlng.lng.toFixed(6);
+            });
+            setTimeout(function() { pickMap.invalidateSize(); }, 100);
+        }
+        function saveEquip() {
+            const name = document.getElementById("eq-name").value.trim();
+            const loc = document.getElementById("eq-loc").value.trim();
+            const deviceId = document.getElementById("eq-device").value.trim();
+            if (!name || !loc) { alert("Ad ve konum gerekli"); return; }
+            if (!deviceId) { alert("SCADA için Device ID gerekli"); return; }
+            const token = document.getElementById("eq-token").value.trim() || ("tok_" + Math.random().toString(36).slice(2));
+            const topic = document.getElementById("eq-topic").value.trim() || ("helpas/v1/site/" + deviceId + "/telemetry");
+            equipment.push({
+                id: "eq-"+Date.now(), name, location: loc,
+                customerId: document.getElementById("eq-cust").value,
+                brand: document.getElementById("eq-brand").value,
+                model: document.getElementById("eq-model").value,
+                lat: parseFloat(document.getElementById("eq-lat").value)||41.02,
+                lng: parseFloat(document.getElementById("eq-lng").value)||29.02,
+                period: parseInt(document.getElementById("eq-period").value)||3,
+                nextMaint: document.getElementById("eq-next").value,
+                deviceId: deviceId,
+                deviceToken: token,
+                mqttTopic: topic,
+                status: "ok", online: false, floor: 1, source: "link"
+            });
+            closeModal("equip-modal");
+            if (pickMap) { pickMap.remove(); pickMap = null; }
+            renderAll();
+            alert("Ekipman kaydedildi.\nDevice ID: " + deviceId + "\nToken: " + token + "\nTopic: " + topic + "\n\nBu bilgileri IoT gateway (cihaz) ayarına yazın.");
+        }
+        function openCustomerModal() {
+            document.getElementById("cu-name").value = "";
+            document.getElementById("cu-contact").value = "";
+            document.getElementById("cu-phone").value = "";
+            document.getElementById("customer-modal").classList.add("open");
+        }
+        function saveCustomer() {
+            const name = document.getElementById("cu-name").value.trim();
+            if (!name) return;
+            customers.push({
+                id: "c"+Date.now(), name,
+                contact: document.getElementById("cu-contact").value,
+                phone: document.getElementById("cu-phone").value
+            });
+            closeModal("customer-modal");
+            renderAll();
+        }
+
+        function renderAll() {
+            renderJobs();
+            renderMap();
+            document.getElementById("contracts-list").innerHTML = contracts.map(ct => {
+                const c = cust(ct.customerId);
+                const e = eq(ct.equipId);
+                return `<div class="card">
+                    <h3>${e?e.name:"—"} · ${c?c.name:"—"}</h3>
+                    <div class="meta">${ct.start} → ${ct.end} · ${ct.period} ayda bir PM</div>
+                    <div class="meta">Aylık: <b>${ct.fee.toLocaleString("tr-TR")} ₺</b> · ${ct.scope}</div>
+                </div>`;
+            }).join("") || `<div class="empty">Sözleşme yok</div>`;
+            document.getElementById("pm-list").innerHTML = jobs.filter(j=>j.type==="pm").sort((a,b)=>a.date.localeCompare(b.date)).slice(0,20).map(j=>{
+                const e = eq(j.equipId);
+                return `<div class="card" style="padding:10px">
+                    <div style="display:flex;justify-content:space-between">
+                        <span><b>${e?e.name:j.equipId}</b> · ${j.date}</span>
+                        <span class="badge ${j.status==="done"?"ok":"pm"}">${j.status==="done"?"Tamam":"Planlı"}</span>
+                    </div>
+                </div>`;
+            }).join("");
+            document.getElementById("pay-list").innerHTML = jobs.filter(j=>j.status==="done").map(j=>{
+                const e = eq(j.equipId);
+                return `<div class="card">
+                    <div style="display:flex;justify-content:space-between">
+                        <div>
+                            <h3>${e?e.name:j.equipId}</h3>
+                            <div class="meta">${j.title} · ${j.date} · ${j.tech||"—"}</div>
+                            <div class="meta">${j.payment.note||""}</div>
+                        </div>
+                        <div style="text-align:right">
+                            <span class="badge ${j.payment.received?"paid":"unpaid"}">${j.payment.received?"Alındı":"Bekliyor"}</span>
+                            <div style="margin-top:6px;font-weight:700">${j.payment.amount?j.payment.amount.toLocaleString("tr-TR")+" ₺":"—"}</div>
+                        </div>
+                    </div>
+                </div>`;
+            }).join("") || `<div class="empty">Tamamlanmış servis yok</div>`;
+            const q = (document.getElementById("equip-search")?.value||"").toLowerCase();
+            document.getElementById("equip-list").innerHTML = equipment
+                .filter(e=>!q||e.name.toLowerCase().includes(q)||e.location.toLowerCase().includes(q))
+                .map(e=>`<div class="card" style="padding:10px">
+                    <div style="display:flex;justify-content:space-between">
+                        <b>${e.name}</b>
+                        <span class="badge ${e.status}">${e.status}</span>
+                    </div>
+                    <div class="meta">${e.location} · ${e.brand||""} ${e.model||""}</div>
+                    <div class="meta">PM: her ${e.period} ay · Sonraki: <span class="${daysUntil(e.nextMaint)<=14?"maint-due":"maint-ok"}">${e.nextMaint||"—"}</span></div>
+                    <div class="meta">SCADA: <code style="color:#67e8f9">${e.deviceId||"—"}</code></div>
+                </div>`).join("");
+            document.getElementById("crm-list").innerHTML = customers.map(c=>{
+                const n = equipment.filter(e=>e.customerId===c.id).length;
+                return `<div class="card" style="padding:10px"><b>${c.name}</b><div class="meta">${c.contact||""} · ${c.phone||""}</div><div class="meta">${n} asansör</div></div>`;
+            }).join("");
+
+            // Hesabım
+            const ac = document.getElementById("account-card");
+            if (ac && currentUser) {
+                ac.innerHTML = `<b>${currentUser.name}</b>
+                    <div class="meta">@${currentUser.username} · ${currentUser.role==="admin"?"Yönetici":"Saha"}</div>
+                    <div class="btn-row">
+                        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('pass-modal').classList.add('open')">Şifre değiştir</button>
+                    </div>`;
+            }
+            const adminSec = document.getElementById("admin-users-section");
+            if (adminSec) {
+                adminSec.style.display = (currentUser && currentUser.role === "admin") ? "block" : "none";
+                if (currentUser && currentUser.role === "admin") {
+                    const users = loadUsers();
+                    document.getElementById("users-list").innerHTML = users.map(u => `
+                        <div class="card" style="padding:10px">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                                <div>
+                                    <b>${u.name}</b>
+                                    <div class="meta">@${u.username} · ${u.role==="admin"?"Yönetici":"Saha"} ${u.wa?"· WA:"+u.wa:""}</div>
+                                </div>
+                                <div>
+                                    ${u.username!=="admin"?`<button class="btn btn-ghost btn-sm" onclick="adminResetUser('${u.username}')">Şifre sıfırla</button>`:""}
+                                </div>
+                            </div>
+                        </div>`).join("");
+                    const reqs = loadResetRequests().slice(0, 10);
+                    document.getElementById("reset-requests-list").innerHTML = reqs.length
+                        ? reqs.map(r => `<div class="card" style="padding:10px"><b>${r.name}</b> (@${r.username})<div class="meta">${new Date(r.at).toLocaleString("tr-TR")} · geçici şifre verildi</div></div>`).join("")
+                        : `<div class="empty">Talep yok</div>`;
+                }
+            }
+
+            // --- Muhasebe ---
+            const paidJobs = jobs.filter(j => j.status==="done" && j.payment.received);
+            const unpaidJobs = jobs.filter(j => j.status==="done" && !j.payment.received);
+            const tahsilat = paidJobs.reduce((s,j)=>s+(j.payment.amount||0), 0);
+            const bekleyen = unpaidJobs.reduce((s,j)=>s+(j.payment.amount||0), 0);
+            const sozAylik = contracts.filter(c=>c.status==="Aktif").reduce((s,c)=>s+(c.fee||0), 0);
+            const doneCount = jobs.filter(j=>j.status==="done").length;
+            const elIn = document.getElementById("acc-in");
+            if (elIn) {
+                elIn.textContent = tahsilat.toLocaleString("tr-TR");
+                document.getElementById("acc-contract").textContent = sozAylik.toLocaleString("tr-TR");
+                document.getElementById("acc-unpaid").textContent = bekleyen.toLocaleString("tr-TR");
+                document.getElementById("acc-jobs").textContent = doneCount;
+                document.getElementById("acc-payments").innerHTML = paidJobs.length ? paidJobs.map(j=>{
+                    const e = eq(j.equipId);
+                    return `<div class="card" style="padding:10px">
+                        <div style="display:flex;justify-content:space-between">
+                            <div><b>${e?e.name:j.equipId}</b><div class="meta">${j.title} · ${j.date} · ${j.tech||"—"}</div>
+                            <div class="meta">${j.payment.note||""}</div></div>
+                            <b style="color:#4ade80">+${(j.payment.amount||0).toLocaleString("tr-TR")} ₺</b>
+                        </div>
+                    </div>`;
+                }).join("") : `<div class="empty">Tahsilat kaydı yok (formda tutar girip ödeme alındı seçin)</div>`;
+                document.getElementById("acc-contracts").innerHTML = contracts.map(ct=>{
+                    const c = cust(ct.customerId); const e = eq(ct.equipId);
+                    return `<div class="card" style="padding:10px">
+                        <b>${e?e.name:"—"}</b> · ${c?c.name:"—"}
+                        <div class="meta">${ct.scope} · ${ct.start} → ${ct.end}</div>
+                        <div class="meta">Aylık <b>${(ct.fee||0).toLocaleString("tr-TR")} ₺</b></div>
+                    </div>`;
+                }).join("") || `<div class="empty">Sözleşme yok</div>`;
+                // iş gücü: teknisyen başı tamamlanan iş
+                const laborMap = {};
+                jobs.filter(j=>j.status==="done" && j.tech).forEach(j=>{
+                    laborMap[j.tech] = laborMap[j.tech] || { done:0, open:0 };
+                    laborMap[j.tech].done++;
+                });
+                jobs.filter(j=>j.status==="open" && j.tech).forEach(j=>{
+                    laborMap[j.tech] = laborMap[j.tech] || { done:0, open:0 };
+                    laborMap[j.tech].open++;
+                });
+                document.getElementById("acc-labor").innerHTML = Object.keys(laborMap).length
+                    ? Object.entries(laborMap).map(([name,v])=>`<div class="card" style="padding:10px">
+                        <b>👷 ${name}</b>
+                        <div class="meta">Tamamlanan: ${v.done} · Açık iş: ${v.open}</div>
+                    </div>`).join("")
+                    : `<div class="empty">Henüz iş ataması yok</div>`;
+            }
+
+            // --- Ekip / iş gücü ---
+            const crewEl = document.getElementById("crew-list");
+            if (crewEl) {
+                crewEl.innerHTML = technicians.map(t => {
+                    const openJobs = jobs.filter(j => j.status==="open" && j.tech===t.name);
+                    const loc = openJobs.length ? eq(openJobs[0].equipId) : null;
+                    return `<div class="card">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                            <div>
+                                <h3>👷 ${t.name}</h3>
+                                <div class="meta">${t.phone}</div>
+                                ${loc ? `<div class="meta" style="color:#93c5fd;margin-top:4px">📍 Şu an: ${loc.name} — ${loc.location}</div>
+                                <div class="meta">İş: ${openJobs.map(j=>j.title).join(", ")}</div>`
+                                : `<div class="meta" style="margin-top:4px">Boşta / atama yok</div>`}
+                            </div>
+                            <span class="badge ${openJobs.length?"warn":"ok"}">${openJobs.length?"İşte":"Boşta"}</span>
+                        </div>
+                    </div>`;
+                }).join("");
+                document.getElementById("crew-jobs").innerHTML = jobs.filter(j=>j.status==="open").map(j=>{
+                    const e = eq(j.equipId);
+                    return `<div class="card" style="padding:10px">
+                        <b>${j.title}</b>
+                        <div class="meta">${e?e.name:""} · ${e?e.location:""}</div>
+                        <div class="meta">${j.tech ? "👷 "+j.tech : "Atanmadı"} · ${j.date}</div>
+                    </div>`;
+                }).join("") || `<div class="empty">Açık iş yok</div>`;
+            }
+        }
+
+        document.getElementById("equip-search")?.addEventListener("input", renderAll);
+
+        async function checkApiStatus() {
+            const el = document.getElementById("api-status");
+            if (!el) return;
+            el.style.color = "#64748b";
+            el.textContent = "API kontrol: " + API_BASE;
+            try {
+                const res = await fetch(API_BASE + "/api/health", { method: "GET", mode: "cors" });
+                const text = await res.text();
+                let data = null;
+                try { data = JSON.parse(text); } catch (_) {}
+                if (res.ok && data && data.ok) {
+                    el.style.color = "#4ade80";
+                    el.textContent = "API bağlı" + (data.hasDb ? " · Neon secret var" : " · Neon secret eksik");
+                } else {
+                    el.style.color = "#fbbf24";
+                    el.textContent = "API yanıt " + res.status + " · " + (text || "").slice(0, 80);
+                }
+            } catch (e) {
+                el.style.color = "#f87171";
+                el.textContent = "API yok: " + (e && e.message ? e.message : "ağ/CORS") + " · " + API_BASE;
+            }
+        }
+        checkApiStatus();
+    </script>
+</body>
+</html>
