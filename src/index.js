@@ -4,7 +4,7 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, authorization",
+    "access-control-allow-headers": "content-type, authorization, x-tenant",
     "content-type": "application/json",
   };
 }
@@ -15,16 +15,93 @@ function getDatabaseUrl(env) {
   if (!env) return null;
   return env.DATABASE_URL || env.NEON_DATABASE_URL || env.POSTGRES_URL || null;
 }
+function tenantFrom(request, body) {
+  const h = request.headers.get("x-tenant");
+  if (h && h.trim()) return h.trim().toLowerCase();
+  if (body && body.tenant) return String(body.tenant).trim().toLowerCase();
+  return "helpas";
+}
 
 async function ensureSchema(sql) {
+  await sql`create table if not exists tenants (
+    code text primary key,
+    name text not null,
+    plan text default 'standard',
+    max_equipment int default 300,
+    active boolean default true,
+    created_at timestamptz default now()
+  )`;
+  await sql`insert into tenants (code, name, plan, max_equipment)
+    values ('helpas', 'HelpAS Ana', 'pro', 1000)
+    on conflict (code) do nothing`;
+
+  await sql`create table if not exists users (
+    id uuid primary key default gen_random_uuid(),
+    tenant_code text not null default 'helpas',
+    username text not null,
+    name text not null,
+    role text not null default 'saha',
+    password_hash text not null,
+    wa text,
+    sicil text,
+    active boolean default true,
+    created_at timestamptz default now(),
+    unique (tenant_code, username)
+  )`;
+  try { await sql`alter table users add column if not exists tenant_code text default 'helpas'`; } catch (_) {}
+  try { await sql`alter table users add column if not exists sicil text`; } catch (_) {}
+  try { await sql`alter table users drop constraint if exists users_role_check`; } catch (_) {}
+  // seed platform admin
+  await sql`
+    insert into users (tenant_code, username, name, role, password_hash, sicil, active)
+    values ('helpas', 'admin', 'Sabri Altan', 'admin', 'SabriAltan123', 'SCL-1', true)
+    on conflict (tenant_code, username) do nothing`;
+
+  await sql`create table if not exists customers (
+    id uuid primary key default gen_random_uuid(),
+    tenant_code text not null default 'helpas',
+    name text not null,
+    contact text, phone text, email text, address text,
+    created_at timestamptz default now()
+  )`;
+  try { await sql`alter table customers add column if not exists tenant_code text default 'helpas'`; } catch (_) {}
+
+  await sql`create table if not exists equipment (
+    id uuid primary key default gen_random_uuid(),
+    tenant_code text not null default 'helpas',
+    name text not null,
+    location text,
+    customer_id uuid,
+    brand text, model text, serial_no text,
+    lat double precision, lng double precision,
+    period_months int default 3,
+    last_maint date, next_maint date,
+    device_id text,
+    device_token_hash text,
+    mqtt_topic text,
+    status text default 'ok',
+    online boolean default false,
+    floor int default 1,
+    alarm text,
+    last_seen timestamptz,
+    created_at timestamptz default now()
+  )`;
+  try { await sql`alter table equipment add column if not exists tenant_code text default 'helpas'`; } catch (_) {}
+  try {
+    await sql`create unique index if not exists equipment_tenant_device_uidx on equipment (tenant_code, device_id)`;
+  } catch (_) {}
+
   await sql`create table if not exists form_seq (
-    kind text primary key, last_num int not null default 0)`;
-  await sql`insert into form_seq (kind, last_num) values ('pm', 0) on conflict do nothing`;
-  await sql`insert into form_seq (kind, last_num) values ('fault', 0) on conflict do nothing`;
-  await sql`insert into form_seq (kind, last_num) values ('sicil', 1000) on conflict do nothing`;
+    tenant_code text not null default 'helpas',
+    kind text not null,
+    last_num int not null default 0,
+    primary key (tenant_code, kind)
+  )`;
+
   await sql`create table if not exists service_forms (
     id uuid primary key default gen_random_uuid(),
-    form_no text unique not null,
+    tenant_code text not null default 'helpas',
+    form_no text not null,
     kind text not null,
     equipment_id text,
     equipment_name text,
@@ -39,21 +116,40 @@ async function ensureSchema(sql) {
     checklist jsonb default '[]'::jsonb,
     payment jsonb default '{}'::jsonb,
     created_at timestamptz default now(),
-    completed_at timestamptz
+    completed_at timestamptz,
+    unique (tenant_code, form_no)
   )`;
-  // SCADA: sadece SON durum (canlı, tek satır / cihaz)
+  try { await sql`alter table service_forms add column if not exists tenant_code text default 'helpas'`; } catch (_) {}
+
+  await sql`create table if not exists contracts (
+    id uuid primary key default gen_random_uuid(),
+    tenant_code text not null default 'helpas',
+    customer_id text,
+    equipment_id text,
+    start_date date,
+    end_date date,
+    monthly_fee numeric(12,2) default 0,
+    period_months int default 3,
+    scope text,
+    status text default 'Taslak',
+    created_at timestamptz default now()
+  )`;
+  try { await sql`alter table contracts add column if not exists tenant_code text default 'helpas'`; } catch (_) {}
+
   await sql`create table if not exists telemetry_latest (
-    device_id text primary key,
+    tenant_code text not null default 'helpas',
+    device_id text not null,
     status text,
     floor int,
     alarm text,
     online boolean default true,
     payload jsonb default '{}'::jsonb,
-    received_at timestamptz default now()
+    received_at timestamptz default now(),
+    primary key (tenant_code, device_id)
   )`;
-  // SCADA: seyrek olay arşivi (sadece değişim / alarm — şişirmez)
   await sql`create table if not exists telemetry_events (
     id bigserial primary key,
+    tenant_code text not null default 'helpas',
     device_id text not null,
     event_type text not null,
     status text,
@@ -61,86 +157,72 @@ async function ensureSchema(sql) {
     payload jsonb default '{}'::jsonb,
     created_at timestamptz default now()
   )`;
-  await sql`create index if not exists idx_te_device_created on telemetry_events (device_id, created_at desc)`;
-  // Günlük yedek özeti (master veri ezilmez; anlık kopya JSON)
+  await sql`create table if not exists crew_locations (
+    tenant_code text not null default 'helpas',
+    username text not null,
+    name text,
+    lat double precision not null,
+    lng double precision not null,
+    updated_at timestamptz default now(),
+    primary key (tenant_code, username)
+  )`;
   await sql`create table if not exists daily_backups (
     id bigserial primary key,
-    backup_date date not null unique,
+    tenant_code text not null default 'helpas',
+    backup_date date not null,
     taken_at timestamptz default now(),
     timezone text default 'Europe/Istanbul',
     counts jsonb not null,
-    snapshot jsonb not null
+    snapshot jsonb not null,
+    unique (tenant_code, backup_date)
   )`;
-  try { await sql`alter table users add column if not exists sicil text`; } catch (_) {}
-  try { await sql`alter table users drop constraint if exists users_role_check`; } catch (_) {}
-  // role: admin | mudur | muhasebe | saha — constraint yok (esnek)
+}
+
+async function nextNo(sql, tenant, kind) {
+  const prefix = kind === "pm" ? "PM" : kind === "fault" ? "ARZ" : "SCL";
+  const year = new Date().getFullYear();
+  const rows = await sql`
+    insert into form_seq (tenant_code, kind, last_num) values (${tenant}, ${kind}, 1)
+    on conflict (tenant_code, kind) do update set last_num = form_seq.last_num + 1
+    returning last_num`;
+  return `${prefix}-${year}-${String(rows[0].last_num).padStart(5, "0")}`;
 }
 
 async function runDailyBackup(sql) {
   await ensureSchema(sql);
-  // Türkiye tarihi
   const trDate = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });
-
-  const users = await sql`select username, name, role, wa, sicil, active from users`;
-  const customers = await sql`select id, name, contact, phone, email, address from customers`;
-  const equipment = await sql`select id, name, location, customer_id, brand, model, serial_no,
-    lat, lng, period_months, last_maint, next_maint, device_id, mqtt_topic, status, online, floor from equipment`;
-  const forms = await sql`select form_no, kind, equipment_id, equipment_name, customer_name,
-    tech_name, tech_sicil, form_date, status, priority, summary, technical, checklist, payment, completed_at
-    from service_forms order by created_at desc limit 5000`;
-  const contracts = await sql`select id, customer_id, equipment_id, start_date, end_date, monthly_fee, period_months, scope, status from contracts`.catch(() => []);
-  const scadaLatest = await sql`select device_id, status, floor, alarm, online, received_at from telemetry_latest`;
-
-  const counts = {
-    users: users.length,
-    customers: customers.length,
-    equipment: equipment.length,
-    forms: forms.length,
-    contracts: Array.isArray(contracts) ? contracts.length : 0,
-    scada_devices: scadaLatest.length,
-  };
-
-  // Master + formlar yedek; SCADA sadece özet (payload yok — şişirmez)
-  const snapshot = {
-    users,
-    customers,
-    equipment,
-    forms,
-    contracts: Array.isArray(contracts) ? contracts : [],
-    scada_latest_summary: scadaLatest,
-  };
-
-  await sql`
-    insert into daily_backups (backup_date, timezone, counts, snapshot)
-    values (${trDate}, 'Europe/Istanbul', ${JSON.stringify(counts)}::jsonb, ${JSON.stringify(snapshot)}::jsonb)
-    on conflict (backup_date) do update set
-      taken_at = now(),
-      counts = excluded.counts,
-      snapshot = excluded.snapshot
-  `;
-
-  // Eski SCADA olaylarını budama: 30 günden eski event sil (latest dokunulmaz)
+  const tenants = await sql`select code from tenants where active is not false`;
+  const results = [];
+  for (const t of tenants) {
+    const tc = t.code;
+    const users = await sql`select username, name, role, wa, sicil, active from users where tenant_code=${tc}`;
+    const customers = await sql`select id, name, contact, phone, email, address from customers where tenant_code=${tc}`;
+    const equipment = await sql`select id, name, location, customer_id, brand, model, device_id, lat, lng, period_months, next_maint, status from equipment where tenant_code=${tc}`;
+    const forms = await sql`select form_no, kind, equipment_id, equipment_name, form_date, status, summary, technical, checklist, payment from service_forms where tenant_code=${tc} order by created_at desc limit 3000`;
+    const counts = { users: users.length, customers: customers.length, equipment: equipment.length, forms: forms.length };
+    const snapshot = { users, customers, equipment, forms };
+    await sql`
+      insert into daily_backups (tenant_code, backup_date, timezone, counts, snapshot)
+      values (${tc}, ${trDate}, 'Europe/Istanbul', ${JSON.stringify(counts)}::jsonb, ${JSON.stringify(snapshot)}::jsonb)
+      on conflict (tenant_code, backup_date) do update set taken_at=now(), counts=excluded.counts, snapshot=excluded.snapshot`;
+    results.push({ tenant: tc, counts });
+  }
   await sql`delete from telemetry_events where created_at < now() - interval '30 days'`;
-  // 90 günden eski günlük yedek sil (isterseniz uzatılır)
   await sql`delete from daily_backups where backup_date < (current_date - interval '90 days')`;
-
-  return { backup_date: trDate, counts };
+  return { backup_date: trDate, results };
 }
 
 export default {
-  // Cloudflare Cron: TR 00:00
   async scheduled(event, env, ctx) {
     const dbUrl = getDatabaseUrl(env);
     if (!dbUrl) return;
-    const sql = neon(dbUrl);
-    ctx.waitUntil(runDailyBackup(sql));
+    ctx.waitUntil(runDailyBackup(neon(dbUrl)));
   },
 
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders() });
-    }
+    if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders() });
+
     try {
       const dbUrl = getDatabaseUrl(env);
       const sql = dbUrl ? neon(dbUrl) : null;
@@ -160,8 +242,9 @@ export default {
           hasDb: Boolean(dbUrl),
           dbOk,
           dbError,
+          multiTenant: true,
           backupCron: "0 21 * * * UTC (= 00:00 Europe/Istanbul)",
-          message: dbOk ? "API + Neon OK" : "Neon baglantisi yok veya hata",
+          message: dbOk ? "API + Neon OK (SaaS multi-tenant)" : "Neon baglantisi yok veya hata",
         });
       }
 
@@ -169,52 +252,72 @@ export default {
 
       if (url.pathname === "/api/setup" && request.method === "POST") {
         await ensureSchema(sql);
-        return json({ ok: true, message: "schema ok — scada ayrı, yedek tablosu hazır" });
+        return json({ ok: true, message: "multi-tenant schema ok" });
       }
 
-      // Manuel yedek tetik (admin)
-      if (url.pathname === "/api/backup/run" && request.method === "POST") {
-        const result = await runDailyBackup(sql);
-        return json({ ok: true, ...result });
-      }
-      if (url.pathname === "/api/backup/list" && request.method === "GET") {
+      // —— TENANTS (platform) ——
+      if (url.pathname === "/api/tenants" && request.method === "GET") {
         await ensureSchema(sql);
-        const rows = await sql`
-          select id, backup_date, taken_at, timezone, counts
-          from daily_backups order by backup_date desc limit 30`;
-        return json({ ok: true, backups: rows });
+        const rows = await sql`select code, name, plan, max_equipment, active, created_at from tenants order by created_at desc`;
+        return json({ ok: true, tenants: rows });
+      }
+      if (url.pathname === "/api/tenants" && request.method === "POST") {
+        await ensureSchema(sql);
+        const body = await request.json().catch(() => ({}));
+        const code = (body.code || "").trim().toLowerCase();
+        const name = (body.name || "").trim();
+        const plan = body.plan || "standard";
+        const maxEq = plan === "starter" ? 50 : plan === "pro" ? 1000 : 300;
+        if (!code || !name) return json({ ok: false, error: "code ve name gerekli" }, 400);
+        await sql`
+          insert into tenants (code, name, plan, max_equipment, active)
+          values (${code}, ${name}, ${plan}, ${maxEq}, true)
+          on conflict (code) do update set name=excluded.name, plan=excluded.plan, max_equipment=excluded.max_equipment, active=true`;
+        // tenant admin seed
+        await sql`
+          insert into users (tenant_code, username, name, role, password_hash, sicil, active)
+          values (${code}, 'admin', ${name + " Admin"}, 'admin', 'SabriAltan123', 'SCL-1', true)
+          on conflict (tenant_code, username) do nothing`;
+        return json({ ok: true, tenant: { code, name, plan, max_equipment: maxEq }, default_admin: "admin / SabriAltan123" });
       }
 
-      async function nextNo(kind) {
-        const prefix = kind === "pm" ? "PM" : kind === "fault" ? "ARZ" : "SCL";
-        const year = new Date().getFullYear();
-        const rows = await sql`
-          insert into form_seq (kind, last_num) values (${kind}, 1)
-          on conflict (kind) do update set last_num = form_seq.last_num + 1
-          returning last_num`;
-        return `${prefix}-${year}-${String(rows[0].last_num).padStart(5, "0")}`;
-      }
-
-      // LOGIN
+      // —— LOGIN (tenant scoped) ——
       if (url.pathname === "/api/login" && request.method === "POST") {
+        await ensureSchema(sql);
         const body = await request.json().catch(() => ({}));
         const username = (body.username || "").trim();
         const password = body.password || "";
+        const tenant = tenantFrom(request, body);
+        const trows = await sql`select code, name, plan, max_equipment, active from tenants where code=${tenant} limit 1`;
+        if (!trows[0]) return json({ ok: false, error: "Kiraci bulunamadi: " + tenant }, 404);
+        if (trows[0].active === false) return json({ ok: false, error: "Kiraci pasif" }, 403);
         const rows = await sql`
           select username, name, role, wa, password_hash, sicil
-          from users where username = ${username} limit 1`;
+          from users where tenant_code=${tenant} and username=${username} limit 1`;
         const u = rows[0];
         if (!u || u.password_hash !== password) return json({ ok: false, error: "Hatali giris" }, 401);
         return json({
-          ok: true, source: "neon",
-          user: { username: u.username, name: u.name, role: u.role, wa: u.wa || "", sicil: u.sicil || "" },
+          ok: true,
+          source: "neon",
+          multiTenant: true,
+          user: { username: u.username, name: u.name, role: u.role, wa: u.wa || "", sicil: u.sicil || "", tenant },
+          tenant,
+          tenant_name: trows[0].name,
+          plan: trows[0].plan,
+          max_equipment: trows[0].max_equipment,
         });
       }
 
-      // USERS — güncelleme mevcut satırı günceller; silmez / ezmez (username key)
+      // Resolve tenant for data APIs
+      const bodyPeek = request.method === "GET" || request.method === "DELETE"
+        ? {}
+        : await request.clone().json().catch(() => ({}));
+      const tenant = tenantFrom(request, bodyPeek);
+
+      // USERS
       if (url.pathname === "/api/users" && request.method === "GET") {
-        const rows = await sql`select username, name, role, wa, active, sicil, created_at from users order by username`;
-        return json({ ok: true, users: rows });
+        const rows = await sql`select username, name, role, wa, active, sicil, created_at from users where tenant_code=${tenant} order by username`;
+        return json({ ok: true, tenant, users: rows });
       }
       if (url.pathname === "/api/users" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
@@ -225,11 +328,11 @@ export default {
         const wa = (body.wa || "").trim() || null;
         let sicil = (body.sicil || "").trim();
         if (!username || !name || !password) return json({ ok: false, error: "eksik alan" }, 400);
-        if (!sicil) sicil = await nextNo("sicil");
+        if (!sicil) sicil = await nextNo(sql, tenant, "sicil");
         await sql`
-          insert into users (username, name, role, password_hash, wa, active, sicil)
-          values (${username}, ${name}, ${role}, ${password}, ${wa}, true, ${sicil})
-          on conflict (username) do nothing`;
+          insert into users (tenant_code, username, name, role, password_hash, wa, active, sicil)
+          values (${tenant}, ${username}, ${name}, ${role}, ${password}, ${wa}, true, ${sicil})
+          on conflict (tenant_code, username) do nothing`;
         return json({ ok: true, user: { username, name, role, wa: wa || "", sicil } });
       }
       if (url.pathname === "/api/users" && request.method === "PUT") {
@@ -241,27 +344,42 @@ export default {
         const wa = (body.wa || "").trim() || null;
         const sicil = (body.sicil || "").trim() || null;
         if (body.password) {
-          await sql`update users set name=${name}, role=${role}, wa=${wa},
-            sicil=coalesce(${sicil}, sicil), password_hash=${body.password} where username=${username}`;
+          await sql`update users set name=${name}, role=${role}, wa=${wa}, sicil=coalesce(${sicil}, sicil), password_hash=${body.password}
+            where tenant_code=${tenant} and username=${username}`;
         } else {
-          await sql`update users set name=${name}, role=${role}, wa=${wa},
-            sicil=coalesce(${sicil}, sicil) where username=${username}`;
+          await sql`update users set name=${name}, role=${role}, wa=${wa}, sicil=coalesce(${sicil}, sicil)
+            where tenant_code=${tenant} and username=${username}`;
         }
+        return json({ ok: true });
+      }
+      if (url.pathname === "/api/admin/delete-user" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const username = (body.username || "").trim();
+        if (!username || username === "admin") return json({ ok: false, error: "admin silinemez" }, 400);
+        await sql`delete from users where tenant_code=${tenant} and username=${username}`;
+        return json({ ok: true, deleted: username });
+      }
+      if (url.pathname === "/api/admin/set-password" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const username = (body.username || "").trim();
+        const password = body.password || "";
+        if (!username || password.length < 6) return json({ ok: false, error: "username ve sifre" }, 400);
+        await sql`update users set password_hash=${password} where tenant_code=${tenant} and username=${username}`;
         return json({ ok: true });
       }
 
       // CUSTOMERS
       if (url.pathname === "/api/customers" && request.method === "GET") {
-        const rows = await sql`select id, name, contact, phone, email, address, created_at from customers order by name`;
-        return json({ ok: true, customers: rows });
+        const rows = await sql`select id, name, contact, phone, email, address, created_at from customers where tenant_code=${tenant} order by name`;
+        return json({ ok: true, tenant, customers: rows });
       }
       if (url.pathname === "/api/customers" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const name = (body.name || "").trim();
         if (!name) return json({ ok: false, error: "name gerekli" }, 400);
         const rows = await sql`
-          insert into customers (name, contact, phone, email, address)
-          values (${name}, ${(body.contact||"").trim()||null}, ${(body.phone||"").trim()||null},
+          insert into customers (tenant_code, name, contact, phone, email, address)
+          values (${tenant}, ${name}, ${(body.contact||"").trim()||null}, ${(body.phone||"").trim()||null},
             ${(body.email||"").trim()||null}, ${(body.address||"").trim()||null})
           returning id, name, contact, phone, email, address`;
         return json({ ok: true, customer: rows[0] });
@@ -272,38 +390,39 @@ export default {
         await sql`update customers set name=${(body.name||"").trim()},
           contact=${(body.contact||"").trim()||null}, phone=${(body.phone||"").trim()||null},
           email=${(body.email||"").trim()||null}, address=${(body.address||"").trim()||null}
-          where id=${body.id}`;
+          where id=${body.id} and tenant_code=${tenant}`;
         return json({ ok: true });
       }
 
-      // EQUIPMENT — SCADA alanları telemetri ile güncellenir; master PUT ile ayrı
+      // EQUIPMENT
       if (url.pathname === "/api/equipment" && request.method === "GET") {
         const rows = await sql`
-          select e.id, e.name, e.location, e.customer_id, e.brand, e.model, e.serial_no,
-            e.lat, e.lng, e.period_months, e.last_maint, e.next_maint,
-            e.device_id, e.mqtt_topic, e.status, e.online, e.floor, e.alarm, e.last_seen,
-            t.received_at as scada_received_at
-          from equipment e
-          left join telemetry_latest t on t.device_id = e.device_id
-          order by e.name`;
-        return json({ ok: true, equipment: rows });
+          select id, name, location, customer_id, brand, model, serial_no,
+            lat, lng, period_months, last_maint, next_maint,
+            device_id, mqtt_topic, status, online, floor, alarm, last_seen
+          from equipment where tenant_code=${tenant} order by name`;
+        return json({ ok: true, tenant, equipment: rows });
       }
       if (url.pathname === "/api/equipment" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const name = (body.name || "").trim();
         const deviceId = (body.device_id || body.deviceId || "").trim();
         if (!name || !deviceId) return json({ ok: false, error: "name ve device_id gerekli" }, 400);
+        const cnt = await sql`select count(*)::int as c from equipment where tenant_code=${tenant}`;
+        const tinf = await sql`select max_equipment from tenants where code=${tenant} limit 1`;
+        const maxEq = tinf[0]?.max_equipment || 300;
+        if (cnt[0].c >= maxEq) return json({ ok: false, error: "Plan limiti: max " + maxEq + " asansor" }, 403);
         const token = (body.device_token || body.deviceToken || ("tok_" + crypto.randomUUID())).trim();
         const rows = await sql`
           insert into equipment (
-            name, location, customer_id, brand, model, lat, lng, period_months, next_maint,
+            tenant_code, name, location, customer_id, brand, model, lat, lng, period_months, next_maint,
             device_id, device_token_hash, mqtt_topic, status, online, floor
           ) values (
-            ${name}, ${(body.location||"").trim()||null}, ${body.customer_id||body.customerId||null},
+            ${tenant}, ${name}, ${(body.location||"").trim()||null}, ${body.customer_id||body.customerId||null},
             ${body.brand||null}, ${body.model||null}, ${body.lat??null}, ${body.lng??null},
             ${body.period_months||body.period||3}, ${body.next_maint||body.nextMaint||null},
             ${deviceId}, ${token},
-            ${body.mqtt_topic||body.mqttTopic||("helpas/v1/site/"+deviceId+"/telemetry")},
+            ${body.mqtt_topic||body.mqttTopic||("helpas/v1/"+tenant+"/"+deviceId+"/telemetry")},
             'ok', false, 1
           ) returning id, name, location, device_id, status`;
         return json({ ok: true, equipment: rows[0], device_token: token });
@@ -311,51 +430,43 @@ export default {
       if (url.pathname === "/api/equipment" && request.method === "PUT") {
         const body = await request.json().catch(() => ({}));
         if (!body.id) return json({ ok: false, error: "id gerekli" }, 400);
-        // Master veri — SCADA status/online/alarm burada ezilmez
         await sql`
           update equipment set
             name=${(body.name||"").trim()},
             location=${(body.location||"").trim()||null},
             customer_id=${body.customer_id||body.customerId||null},
-            brand=${body.brand||null},
-            model=${body.model||null},
-            lat=${body.lat??null},
-            lng=${body.lng??null},
+            brand=${body.brand||null}, model=${body.model||null},
+            lat=${body.lat??null}, lng=${body.lng??null},
             period_months=${body.period_months||body.period||3},
             next_maint=${body.next_maint||body.nextMaint||null},
             device_id=${(body.device_id||body.deviceId||"").trim()}
-          where id=${body.id}`;
+          where id=${body.id} and tenant_code=${tenant}`;
         return json({ ok: true });
       }
-
-
       if (url.pathname === "/api/equipment" && request.method === "DELETE") {
         const id = url.searchParams.get("id");
         if (!id) return json({ ok: false, error: "id gerekli" }, 400);
-        await sql`delete from equipment where id = ${id}`;
+        await sql`delete from equipment where id=${id} and tenant_code=${tenant}`;
         return json({ ok: true, deleted: id });
       }
 
-      // FORMS — form_no unique; PUT günceller, geçmiş formlar silinmez
+      // FORMS
       if (url.pathname === "/api/forms" && request.method === "GET") {
-        const kind = url.searchParams.get("kind");
-        const rows = kind
-          ? await sql`select * from service_forms where kind=${kind} order by created_at desc limit 200`
-          : await sql`select * from service_forms order by created_at desc limit 200`;
-        return json({ ok: true, forms: rows });
+        const rows = await sql`select * from service_forms where tenant_code=${tenant} order by created_at desc limit 200`;
+        return json({ ok: true, tenant, forms: rows });
       }
       if (url.pathname === "/api/forms" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const kind = body.kind === "fault" ? "fault" : "pm";
-        const formNo = body.form_no || (await nextNo(kind));
+        const formNo = body.form_no || (await nextNo(sql, tenant, kind));
         try {
           const rows = await sql`
             insert into service_forms (
-              form_no, kind, equipment_id, equipment_name, customer_name,
+              tenant_code, form_no, kind, equipment_id, equipment_name, customer_name,
               tech_name, tech_sicil, form_date, status, priority, summary,
               technical, checklist, payment, completed_at
             ) values (
-              ${formNo}, ${kind}, ${body.equipment_id||null}, ${body.equipment_name||null}, ${body.customer_name||null},
+              ${tenant}, ${formNo}, ${kind}, ${body.equipment_id||null}, ${body.equipment_name||null}, ${body.customer_name||null},
               ${body.tech_name||null}, ${body.tech_sicil||null}, ${body.form_date||new Date().toISOString().slice(0,10)},
               ${body.status||"open"}, ${body.priority||null}, ${body.summary||null},
               ${JSON.stringify(body.technical||{})}::jsonb,
@@ -365,7 +476,6 @@ export default {
             ) returning id, form_no, kind`;
           return json({ ok: true, form: rows[0] });
         } catch (e) {
-          // form_no varsa ezme — mevcut kaydı koru
           if (String(e.message || e).includes("unique") || String(e.message || e).includes("duplicate")) {
             return json({ ok: false, error: "form_no mevcut, ezilmedi", form_no: formNo }, 409);
           }
@@ -376,17 +486,16 @@ export default {
         const body = await request.json().catch(() => ({}));
         const formNo = body.form_no;
         if (!formNo) return json({ ok: false, error: "form_no gerekli" }, 400);
-        const existing = await sql`select form_no, status from service_forms where form_no=${formNo} limit 1`;
+        const existing = await sql`select form_no from service_forms where tenant_code=${tenant} and form_no=${formNo} limit 1`;
         if (!existing[0]) {
-          // yoksa insert
           const kind = body.kind === "fault" ? "fault" : "pm";
           await sql`
             insert into service_forms (
-              form_no, kind, equipment_id, equipment_name, customer_name,
+              tenant_code, form_no, kind, equipment_id, equipment_name, customer_name,
               tech_name, tech_sicil, form_date, status, priority, summary,
               technical, checklist, payment, completed_at
             ) values (
-              ${formNo}, ${kind}, ${body.equipment_id||null}, ${body.equipment_name||null}, ${body.customer_name||null},
+              ${tenant}, ${formNo}, ${kind}, ${body.equipment_id||null}, ${body.equipment_name||null}, ${body.customer_name||null},
               ${body.tech_name||null}, ${body.tech_sicil||null}, ${body.form_date||new Date().toISOString().slice(0,10)},
               ${body.status||"open"}, ${body.priority||null}, ${body.summary||null},
               ${JSON.stringify(body.technical||{})}::jsonb,
@@ -398,7 +507,7 @@ export default {
         }
         await sql`
           update service_forms set
-            status=${body.status||existing[0].status},
+            status=${body.status||"done"},
             summary=${body.summary||null},
             technical=${JSON.stringify(body.technical||{})}::jsonb,
             checklist=${JSON.stringify(body.checklist||[])}::jsonb,
@@ -406,216 +515,93 @@ export default {
             tech_name=coalesce(${body.tech_name||null}, tech_name),
             tech_sicil=coalesce(${body.tech_sicil||null}, tech_sicil),
             completed_at=coalesce(${body.completed_at||null}, completed_at)
-          where form_no=${formNo}`;
+          where tenant_code=${tenant} and form_no=${formNo}`;
         return json({ ok: true, updated: true });
       }
 
-      // SCADA canlı — master ekipman ad/konum ezilmez; sadece durum alanları + ayrı telemetry tabloları
+      // SCADA
       if (url.pathname === "/api/telemetry" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const deviceId = (body.device_id || "").trim();
+        const tc = (body.tenant || tenant || "helpas").trim().toLowerCase();
         if (!deviceId) return json({ ok: false, error: "device_id gerekli" }, 400);
         const status = body.status || "ok";
         const floor = body.floor ?? null;
         const alarm = body.alarm ?? null;
         const online = body.online !== false;
-
-        const prev = await sql`select status, alarm, online from telemetry_latest where device_id=${deviceId} limit 1`;
+        const prev = await sql`select status, alarm, online from telemetry_latest where tenant_code=${tc} and device_id=${deviceId} limit 1`;
+        await sql`
+          insert into telemetry_latest (tenant_code, device_id, status, floor, alarm, online, payload, received_at)
+          values (${tc}, ${deviceId}, ${status}, ${floor}, ${alarm}, ${online}, ${JSON.stringify(body)}::jsonb, now())
+          on conflict (tenant_code, device_id) do update set
+            status=excluded.status, floor=coalesce(excluded.floor, telemetry_latest.floor),
+            alarm=excluded.alarm, online=excluded.online, payload=excluded.payload, received_at=now()`;
+        await sql`
+          update equipment set status=${status}, floor=coalesce(${floor}, floor), alarm=${alarm}, online=${online}, last_seen=now()
+          where tenant_code=${tc} and device_id=${deviceId}`;
         const prevRow = prev[0];
-
-        await sql`
-          insert into telemetry_latest (device_id, status, floor, alarm, online, payload, received_at)
-          values (${deviceId}, ${status}, ${floor}, ${alarm}, ${online}, ${JSON.stringify(body)}::jsonb, now())
-          on conflict (device_id) do update set
-            status=excluded.status,
-            floor=coalesce(excluded.floor, telemetry_latest.floor),
-            alarm=excluded.alarm,
-            online=excluded.online,
-            payload=excluded.payload,
-            received_at=now()`;
-
-        // Ekipman canlı alanları — isim/konum/PM dokunulmaz
-        await sql`
-          update equipment set
-            status=${status},
-            floor=coalesce(${floor}, floor),
-            alarm=${alarm},
-            online=${online},
-            last_seen=now()
-          where device_id=${deviceId}`;
-
-        // Sadece değişim veya alarmda event yaz (gereksiz satır yok)
         const changed = !prevRow || prevRow.status !== status || prevRow.alarm !== alarm || prevRow.online !== online;
         const isAlarm = status === "alarm" || (alarm && String(alarm).length > 0);
         if (changed || isAlarm) {
           await sql`
-            insert into telemetry_events (device_id, event_type, status, alarm, payload)
-            values (
-              ${deviceId},
-              ${isAlarm ? "alarm" : "state_change"},
-              ${status}, ${alarm}, ${JSON.stringify({ floor, online })}::jsonb
-            )`;
+            insert into telemetry_events (tenant_code, device_id, event_type, status, alarm, payload)
+            values (${tc}, ${deviceId}, ${isAlarm ? "alarm" : "state_change"}, ${status}, ${alarm}, ${JSON.stringify({ floor, online })}::jsonb)`;
         }
-        return json({ ok: true, recorded_event: changed || isAlarm });
+        return json({ ok: true, tenant: tc, recorded_event: changed || isAlarm });
       }
 
-      // SCADA oku (ayrı)
-      if (url.pathname === "/api/scada/latest" && request.method === "GET") {
-        const rows = await sql`select * from telemetry_latest order by received_at desc nulls last`;
-        return json({ ok: true, latest: rows });
-      }
-      if (url.pathname === "/api/scada/events" && request.method === "GET") {
-        const deviceId = url.searchParams.get("device_id");
-        const rows = deviceId
-          ? await sql`select id, device_id, event_type, status, alarm, payload, created_at
-              from telemetry_events where device_id=${deviceId} order by created_at desc limit 100`
-          : await sql`select id, device_id, event_type, status, alarm, payload, created_at
-              from telemetry_events order by created_at desc limit 100`;
-        return json({ ok: true, events: rows });
-      }
-
-
-      // ===== SUPER ADMIN =====
-      if (url.pathname === "/api/admin/delete-user" && request.method === "POST") {
+      // CREW GPS
+      if (url.pathname === "/api/crew/location" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const username = (body.username || "").trim();
-        if (!username) return json({ ok: false, error: "username gerekli" }, 400);
-        if (username === "admin") return json({ ok: false, error: "admin silinemez" }, 400);
-        await sql`delete from users where username = ${username}`;
-        return json({ ok: true, deleted: username });
+        const name = (body.name || username).trim();
+        const lat = Number(body.lat);
+        const lng = Number(body.lng);
+        const tc = (body.tenant || tenant).trim().toLowerCase();
+        if (!username || Number.isNaN(lat) || Number.isNaN(lng)) return json({ ok: false, error: "eksik" }, 400);
+        await sql`
+          insert into crew_locations (tenant_code, username, name, lat, lng, updated_at)
+          values (${tc}, ${username}, ${name}, ${lat}, ${lng}, now())
+          on conflict (tenant_code, username) do update set
+            name=excluded.name, lat=excluded.lat, lng=excluded.lng, updated_at=now()`;
+        return json({ ok: true });
       }
-
-      if (url.pathname === "/api/admin/set-password" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        const username = (body.username || "").trim();
-        const password = body.password || "";
-        if (!username || password.length < 6) {
-          return json({ ok: false, error: "username ve min 6 karakter sifre" }, 400);
-        }
-        await sql`update users set password_hash = ${password} where username = ${username}`;
-        return json({ ok: true, username });
-      }
-
-      if (url.pathname === "/api/backup/get" && request.method === "GET") {
-        const id = url.searchParams.get("id");
-        if (!id) return json({ ok: false, error: "id gerekli" }, 400);
+      if (url.pathname === "/api/crew/locations" && request.method === "GET") {
+        const tc = (url.searchParams.get("tenant") || tenant).trim().toLowerCase();
         const rows = await sql`
-          select id, backup_date, taken_at, timezone, counts, snapshot
-          from daily_backups where id = ${id} limit 1`;
-        if (!rows[0]) return json({ ok: false, error: "yedek yok" }, 404);
-        return json({ ok: true, backup: rows[0] });
+          select username, name, lat, lng, updated_at from crew_locations
+          where tenant_code=${tc} and updated_at > now() - interval '30 minutes'
+          order by updated_at desc`;
+        return json({ ok: true, tenant: tc, locations: rows });
       }
 
-      // Yedekten geri yükleme — mevcut admin kullanıcısını korur
-      if (url.pathname === "/api/backup/restore" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        const id = body.id;
-        if (!id) return json({ ok: false, error: "id gerekli" }, 400);
-        const rows = await sql`select snapshot from daily_backups where id = ${id} limit 1`;
-        if (!rows[0]) return json({ ok: false, error: "yedek yok" }, 404);
-        const snap = rows[0].snapshot;
-        let restored = { users: 0, customers: 0, equipment: 0, forms: 0 };
-
-        // customers
-        if (Array.isArray(snap.customers)) {
-          for (const c of snap.customers) {
-            await sql`
-              insert into customers (id, name, contact, phone, email, address)
-              values (${c.id}, ${c.name}, ${c.contact||null}, ${c.phone||null}, ${c.email||null}, ${c.address||null})
-              on conflict (id) do update set
-                name=excluded.name, contact=excluded.contact, phone=excluded.phone,
-                email=excluded.email, address=excluded.address`;
-            restored.customers++;
-          }
-        }
-        // equipment
-        if (Array.isArray(snap.equipment)) {
-          for (const e of snap.equipment) {
-            await sql`
-              insert into equipment (
-                id, name, location, customer_id, brand, model, serial_no,
-                lat, lng, period_months, last_maint, next_maint,
-                device_id, device_token_hash, mqtt_topic, status, online, floor
-              ) values (
-                ${e.id}, ${e.name}, ${e.location||null}, ${e.customer_id||null},
-                ${e.brand||null}, ${e.model||null}, ${e.serial_no||null},
-                ${e.lat??null}, ${e.lng??null}, ${e.period_months||3},
-                ${e.last_maint||null}, ${e.next_maint||null},
-                ${e.device_id}, ${e.device_token_hash||'restored'}, ${e.mqtt_topic||null},
-                ${e.status||'ok'}, ${!!e.online}, ${e.floor||1}
-              )
-              on conflict (id) do update set
-                name=excluded.name, location=excluded.location, customer_id=excluded.customer_id,
-                brand=excluded.brand, model=excluded.model, lat=excluded.lat, lng=excluded.lng,
-                period_months=excluded.period_months, next_maint=excluded.next_maint,
-                device_id=excluded.device_id, status=excluded.status`;
-            restored.equipment++;
-          }
-        }
-        // forms by form_no
-        if (Array.isArray(snap.forms)) {
-          for (const f of snap.forms) {
-            await sql`
-              insert into service_forms (
-                form_no, kind, equipment_id, equipment_name, customer_name,
-                tech_name, tech_sicil, form_date, status, priority, summary,
-                technical, checklist, payment, completed_at
-              ) values (
-                ${f.form_no}, ${f.kind}, ${f.equipment_id||null}, ${f.equipment_name||null}, ${f.customer_name||null},
-                ${f.tech_name||null}, ${f.tech_sicil||null}, ${f.form_date},
-                ${f.status||'open'}, ${f.priority||null}, ${f.summary||null},
-                ${JSON.stringify(f.technical||{})}::jsonb,
-                ${JSON.stringify(f.checklist||[])}::jsonb,
-                ${JSON.stringify(f.payment||{})}::jsonb,
-                ${f.completed_at||null}
-              )
-              on conflict (form_no) do update set
-                status=excluded.status, summary=excluded.summary,
-                technical=excluded.technical, checklist=excluded.checklist, payment=excluded.payment`;
-            restored.forms++;
-          }
-        }
-        // users — admin sifresini ezme; diğerlerini geri yükle
-        if (Array.isArray(snap.users)) {
-          for (const u of snap.users) {
-            if (u.username === "admin") continue;
-            await sql`
-              insert into users (username, name, role, password_hash, wa, active, sicil)
-              values (${u.username}, ${u.name}, ${u.role||'saha'}, ${u.password_hash||'ChangeMe1'}, ${u.wa||null}, ${u.active!==false}, ${u.sicil||null})
-              on conflict (username) do update set
-                name=excluded.name, role=excluded.role, wa=excluded.wa, sicil=excluded.sicil`;
-            restored.users++;
-          }
-        }
-        return json({ ok: true, restored });
+      // BACKUP
+      if (url.pathname === "/api/backup/run" && request.method === "POST") {
+        const result = await runDailyBackup(sql);
+        return json({ ok: true, ...result });
+      }
+      if (url.pathname === "/api/backup/list" && request.method === "GET") {
+        const rows = await sql`
+          select id, tenant_code, backup_date, taken_at, timezone, counts
+          from daily_backups where tenant_code=${tenant} order by backup_date desc limit 30`;
+        return json({ ok: true, backups: rows });
       }
 
-      // Kontrollü sıfırlama — admin kullanıcısı kalır
       if (url.pathname === "/api/admin/reset" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
-        if (body.confirm !== "SIFIRLA") {
-          return json({ ok: false, error: "confirm alani tam olarak SIFIRLA olmali" }, 400);
-        }
-        const mode = body.mode || "ops"; // ops | all_except_admin
-        if (mode === "ops" || mode === "all_except_admin") {
-          await sql`delete from service_forms`;
-          await sql`delete from telemetry_events`;
-          await sql`delete from telemetry_latest`;
-          try { await sql`delete from jobs`; } catch (_) {}
-          try { await sql`delete from contracts`; } catch (_) {}
-          await sql`delete from equipment`;
-          await sql`delete from customers`;
-        }
+        if (body.confirm !== "SIFIRLA") return json({ ok: false, error: "confirm=SIFIRLA" }, 400);
+        const mode = body.mode || "ops";
+        await sql`delete from service_forms where tenant_code=${tenant}`;
+        await sql`delete from telemetry_events where tenant_code=${tenant}`;
+        await sql`delete from telemetry_latest where tenant_code=${tenant}`;
+        await sql`delete from equipment where tenant_code=${tenant}`;
+        await sql`delete from customers where tenant_code=${tenant}`;
+        await sql`delete from contracts where tenant_code=${tenant}`;
         if (mode === "all_except_admin") {
-          await sql`delete from users where username <> 'admin'`;
+          await sql`delete from users where tenant_code=${tenant} and username <> 'admin'`;
         }
-        // form sayaçlarını sıfırlama (opsiyonel)
-        if (body.reset_seq) {
-          await sql`update form_seq set last_num = 0 where kind in ('pm','fault')`;
-        }
-        return json({ ok: true, mode, message: "Sifirlama tamam — admin korundu" });
+        return json({ ok: true, tenant, message: "Kiraci verisi sifirlandi — admin korundu" });
       }
-
 
       return json({ ok: false, error: "Not found" }, 404);
     } catch (e) {
