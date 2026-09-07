@@ -328,6 +328,14 @@ export default {
         return json({ ok: true });
       }
 
+
+      if (url.pathname === "/api/equipment" && request.method === "DELETE") {
+        const id = url.searchParams.get("id");
+        if (!id) return json({ ok: false, error: "id gerekli" }, 400);
+        await sql`delete from equipment where id = ${id}`;
+        return json({ ok: true, deleted: id });
+      }
+
       // FORMS — form_no unique; PUT günceller, geçmiş formlar silinmez
       if (url.pathname === "/api/forms" && request.method === "GET") {
         const kind = url.searchParams.get("kind");
