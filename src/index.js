@@ -778,7 +778,12 @@ export default {
         const lat = Number(body.lat);
         const lng = Number(body.lng);
         const tc = (body.tenant || tenant).trim().toLowerCase();
-        if (!username || Number.isNaN(lat) || Number.isNaN(lng)) return json({ ok: false, error: "eksik" }, 400);
+        if (!username) return json({ ok: false, error: "username gerekli" }, 400);
+        if (body.clear === true || body.clear === "true") {
+          await sql`delete from crew_locations where tenant_code=${tc} and username=${username}`;
+          return json({ ok: true, cleared: true });
+        }
+        if (Number.isNaN(lat) || Number.isNaN(lng)) return json({ ok: false, error: "lat/lng gerekli" }, 400);
         await sql`
           insert into crew_locations (tenant_code, username, name, lat, lng, updated_at)
           values (${tc}, ${username}, ${name}, ${lat}, ${lng}, now())
