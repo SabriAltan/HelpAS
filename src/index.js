@@ -287,24 +287,68 @@ export default {
         const body = await request.json().catch(() => ({}));
         const username = (body.username || "").trim();
         const password = body.password || "";
-        const tenant = tenantFrom(request, body);
-        const trows = await sql`select code, name, plan, max_equipment, active from tenants where code=${tenant} limit 1`;
-        if (!trows[0]) return json({ ok: false, error: "Kiraci bulunamadi: " + tenant }, 404);
+        let tenant = (body.tenant || "helpas").trim().toLowerCase() || "helpas";
+        if (!username || !password) return json({ ok: false, error: "Kullanici ve sifre gerekli" }, 400);
+
+        // Kiraci yoksa helpas olustur
+        let trows = await sql`select code, name, plan, max_equipment, active from tenants where code=${tenant} limit 1`;
+        if (!trows[0] && tenant === "helpas") {
+          await sql`insert into tenants (code, name, plan, max_equipment, active)
+            values ('helpas', 'HelpAS Ana', 'pro', 1000, true) on conflict do nothing`;
+          trows = await sql`select code, name, plan, max_equipment, active from tenants where code=${tenant} limit 1`;
+        }
+        if (!trows[0]) return json({ ok: false, error: "Kiraci bulunamadi: " + tenant + " — kodu kontrol edin veya helpas yazin" }, 404);
         if (trows[0].active === false) return json({ ok: false, error: "Kiraci pasif" }, 403);
-        const rows = await sql`
-          select username, name, role, wa, password_hash, sicil
+
+        // 1) tenant + username
+        let rows = await sql`
+          select username, name, role, wa, password_hash, sicil, tenant_code
           from users where tenant_code=${tenant} and username=${username} limit 1`;
+        // 2) eski kayit: tenant_code null/bos
+        if (!rows[0]) {
+          rows = await sql`
+            select username, name, role, wa, password_hash, sicil, tenant_code
+            from users where username=${username}
+              and (tenant_code is null or tenant_code = '' or tenant_code = ${tenant})
+            limit 1`;
+        }
+        // 3) hâlâ yoksa ve admin ise seed et
+        if (!rows[0] && username === "admin" && password === "SabriAltan123") {
+          await sql`
+            insert into users (tenant_code, username, name, role, password_hash, sicil, active)
+            values (${tenant}, 'admin', 'Sabri Altan', 'admin', 'SabriAltan123', 'SCL-1', true)
+            on conflict (tenant_code, username) do update set password_hash='SabriAltan123', role='admin', active=true`;
+          rows = await sql`
+            select username, name, role, wa, password_hash, sicil, tenant_code
+            from users where tenant_code=${tenant} and username='admin' limit 1`;
+        }
         const u = rows[0];
-        if (!u || u.password_hash !== password) return json({ ok: false, error: "Hatali giris" }, 401);
+        if (!u) return json({ ok: false, error: "Hatali giris (kullanici yok / yanlis kiraci kodu)" }, 401);
+        if (String(u.password_hash || "") !== String(password)) {
+          return json({ ok: false, error: "Hatali giris (sifre)" }, 401);
+        }
+        // legacy kullaniciyi kiraciya bagla
+        if (!u.tenant_code || u.tenant_code === "") {
+          try {
+            await sql`update users set tenant_code=${tenant} where username=${username} and (tenant_code is null or tenant_code='')`;
+          } catch (_) {}
+        }
         return json({
           ok: true,
           source: "neon",
           multiTenant: true,
-          user: { username: u.username, name: u.name, role: u.role, wa: u.wa || "", sicil: u.sicil || "", tenant },
+          user: {
+            username: u.username,
+            name: u.name,
+            role: u.role,
+            wa: u.wa || "",
+            sicil: u.sicil || "",
+            tenant
+          },
           tenant,
           tenant_name: trows[0].name,
           plan: trows[0].plan,
-          max_equipment: trows[0].max_equipment,
+          max_equipment: trows[0].max_equipment
         });
       }
 
