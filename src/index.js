@@ -15,6 +15,18 @@ function getDatabaseUrl(env) {
   if (!env) return null;
   return env.DATABASE_URL || env.NEON_DATABASE_URL || env.POSTGRES_URL || null;
 }
+function planLimits(plan) {
+  const p = (plan || "standard").toLowerCase();
+  if (p === "starter") return { max_equipment: 50, max_users: 5, features: ["pm","map","forms"] };
+  if (p === "orta" || p === "standard" || p === "medium") return { max_equipment: 300, max_users: 25, features: ["pm","map","forms","crm","report","gps"] };
+  return { max_equipment: 1000, max_users: 100, features: ["pm","map","forms","crm","report","gps","scada","backup","api"] }; // pro
+}
+function displayName(u) {
+  if (!u) return "";
+  if (u.username === "admin" && (u.tenant_code === "helpas" || !u.tenant_code)) return "Sistem Yöneticisi";
+  if (u.name === "Sabri Altan") return "Sistem Yöneticisi";
+  return u.name || u.username;
+}
 function tenantFrom(request, body) {
   const h = request.headers.get("x-tenant");
   if (h && h.trim()) return h.trim().toLowerCase();
@@ -28,12 +40,37 @@ async function ensureSchema(sql) {
     name text not null,
     plan text default 'standard',
     max_equipment int default 300,
+    max_users int default 20,
     active boolean default true,
+    license_start date,
+    license_end date,
+    license_status text default 'active',
+    last_payment_at date,
+    last_payment_amount numeric(12,2) default 0,
+    notes text,
     created_at timestamptz default now()
   )`;
-  await sql`insert into tenants (code, name, plan, max_equipment)
-    values ('helpas', 'HelpAS Ana', 'pro', 1000)
+  try { await sql`alter table tenants add column if not exists max_users int default 20`; } catch (_) {}
+  try { await sql`alter table tenants add column if not exists license_start date`; } catch (_) {}
+  try { await sql`alter table tenants add column if not exists license_end date`; } catch (_) {}
+  try { await sql`alter table tenants add column if not exists license_status text default 'active'`; } catch (_) {}
+  try { await sql`alter table tenants add column if not exists last_payment_at date`; } catch (_) {}
+  try { await sql`alter table tenants add column if not exists last_payment_amount numeric(12,2) default 0`; } catch (_) {}
+  try { await sql`alter table tenants add column if not exists notes text`; } catch (_) {}
+  await sql`insert into tenants (code, name, plan, max_equipment, max_users, active, license_start, license_end, license_status)
+    values ('helpas', 'HelpAS Ana', 'pro', 1000, 999, true, current_date, current_date + interval '10 years', 'active')
     on conflict (code) do nothing`;
+  await sql`create table if not exists license_payments (
+    id bigserial primary key,
+    tenant_code text not null,
+    amount numeric(12,2) not null,
+    paid_at date not null default current_date,
+    method text,
+    note text,
+    period_start date,
+    period_end date,
+    created_at timestamptz default now()
+  )`;
 
   await sql`create table if not exists users (
     id uuid primary key default gen_random_uuid(),
@@ -268,22 +305,43 @@ export default {
       // —— TENANTS (platform) ——
       if (url.pathname === "/api/tenants" && request.method === "GET") {
         await ensureSchema(sql);
-        const rows = await sql`select code, name, plan, max_equipment, active, created_at from tenants order by created_at desc`;
-        return json({ ok: true, tenants: rows });
+        const reqTenant = tenantFrom(request, {});
+        // Sadece helpas platform admin tumunu gorur; diger kiraci sadece kendini
+        if (reqTenant === "helpas") {
+          const rows = await sql`select code, name, plan, max_equipment, max_users, active,
+            license_start, license_end, license_status, last_payment_at, last_payment_amount, notes, created_at
+            from tenants order by created_at desc`;
+          return json({ ok: true, tenants: rows, platform: true });
+        }
+        const rows = await sql`select code, name, plan, max_equipment, max_users, active,
+          license_start, license_end, license_status
+          from tenants where code=${reqTenant} limit 1`;
+        return json({ ok: true, tenants: rows, platform: false });
       }
       if (url.pathname === "/api/tenants" && request.method === "POST") {
         await ensureSchema(sql);
         const body = await request.json().catch(() => ({}));
+        // sadece platform
+        if (tenantFrom(request, body) !== "helpas") {
+          return json({ ok: false, error: "Sadece platform yoneticisi kiraci acabilir" }, 403);
+        }
         const code = (body.code || "").trim().toLowerCase();
         const name = (body.name || "").trim();
-        const plan = body.plan || "standard";
-        const maxEq = plan === "starter" ? 50 : plan === "pro" ? 1000 : 300;
+        let plan = (body.plan || "standard").toLowerCase();
+        if (plan === "medium") plan = "orta";
+        if (plan === "standard") plan = "orta";
+        const lim = planLimits(plan);
+        const maxEq = body.max_equipment || lim.max_equipment;
+        const maxUs = body.max_users || lim.max_users;
+        const license_start = body.license_start || new Date().toISOString().slice(0,10);
+        const license_end = body.license_end || null;
         if (!code || !name) return json({ ok: false, error: "code ve name gerekli" }, 400);
+        if (code === "helpas") return json({ ok: false, error: "helpas rezerv" }, 400);
         await sql`
-          insert into tenants (code, name, plan, max_equipment, active)
-          values (${code}, ${name}, ${plan}, ${maxEq}, true)
-          on conflict (code) do update set name=excluded.name, plan=excluded.plan, max_equipment=excluded.max_equipment, active=true`;
-        // tenant admin seed
+          insert into tenants (code, name, plan, max_equipment, max_users, active, license_start, license_end, license_status)
+          values (${code}, ${name}, ${plan}, ${maxEq}, ${maxUs}, true, ${license_start}, ${license_end}, 'active')
+          on conflict (code) do update set name=excluded.name, plan=excluded.plan,
+            max_equipment=excluded.max_equipment, max_users=excluded.max_users, active=true`;
         try {
           const ex = await sql`select username from users where username='admin' and tenant_code=${code} limit 1`;
           if (!ex[0]) {
@@ -291,7 +349,64 @@ export default {
               values (${code}, 'admin', ${name + " Admin"}, 'admin', 'SabriAltan123', 'SCL-1', true)`;
           }
         } catch (_) {}
-        return json({ ok: true, tenant: { code, name, plan, max_equipment: maxEq }, default_admin: "admin / SabriAltan123" });
+        return json({ ok: true, tenant: { code, name, plan, max_equipment: maxEq, max_users: maxUs, license_start, license_end }, default_admin: "admin / SabriAltan123" });
+      }
+      // Platform: lisans guncelle
+      if (url.pathname === "/api/tenants" && request.method === "PUT") {
+        const body = await request.json().catch(() => ({}));
+        if (tenantFrom(request, body) !== "helpas") {
+          return json({ ok: false, error: "Sadece platform yoneticisi" }, 403);
+        }
+        const code = (body.code || "").trim().toLowerCase();
+        if (!code) return json({ ok: false, error: "code gerekli" }, 400);
+        let plan = body.plan != null ? String(body.plan).toLowerCase() : null;
+        if (plan === "standard" || plan === "medium") plan = "orta";
+        const lim = plan ? planLimits(plan) : null;
+        await sql`
+          update tenants set
+            name=coalesce(${body.name||null}, name),
+            plan=coalesce(${plan}, plan),
+            max_equipment=coalesce(${body.max_equipment??(lim?lim.max_equipment:null)}, max_equipment),
+            max_users=coalesce(${body.max_users??(lim?lim.max_users:null)}, max_users),
+            active=coalesce(${body.active??null}, active),
+            license_start=coalesce(${body.license_start||null}, license_start),
+            license_end=coalesce(${body.license_end||null}, license_end),
+            license_status=coalesce(${body.license_status||null}, license_status),
+            notes=coalesce(${body.notes||null}, notes)
+          where code=${code}`;
+        return json({ ok: true });
+      }
+      // Lisans odemesi kaydi
+      if (url.pathname === "/api/license/payment" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        if (tenantFrom(request, body) !== "helpas") {
+          return json({ ok: false, error: "Sadece platform yoneticisi odeme girebilir" }, 403);
+        }
+        const code = (body.tenant_code || body.code || "").trim().toLowerCase();
+        const amount = Number(body.amount || 0);
+        if (!code || amount <= 0) return json({ ok: false, error: "tenant_code ve amount gerekli" }, 400);
+        const paid_at = body.paid_at || new Date().toISOString().slice(0,10);
+        const period_end = body.period_end || body.license_end || null;
+        await sql`
+          insert into license_payments (tenant_code, amount, paid_at, method, note, period_start, period_end)
+          values (${code}, ${amount}, ${paid_at}, ${body.method||null}, ${body.note||null}, ${body.period_start||null}, ${period_end})`;
+        await sql`
+          update tenants set
+            last_payment_at=${paid_at},
+            last_payment_amount=${amount},
+            license_end=coalesce(${period_end}, license_end),
+            license_status='active',
+            active=true
+          where code=${code}`;
+        return json({ ok: true });
+      }
+      if (url.pathname === "/api/license/payments" && request.method === "GET") {
+        if (tenantFrom(request, {}) !== "helpas") return json({ ok: false, error: "Yetki yok" }, 403);
+        const code = url.searchParams.get("tenant");
+        const rows = code
+          ? await sql`select * from license_payments where tenant_code=${code} order by paid_at desc, id desc limit 100`
+          : await sql`select * from license_payments order by paid_at desc, id desc limit 100`;
+        return json({ ok: true, payments: rows });
       }
 
       // —— LOGIN (tenant scoped) ——
@@ -369,22 +484,43 @@ export default {
           }
         }
 
+        // Lisans kontrolu (helpas platform muaf)
+        if (tenant !== "helpas") {
+          const end = trows[0].license_end;
+          const st = trows[0].license_status || "active";
+          if (st === "suspended" || st === "expired") {
+            return json({ ok: false, error: "Lisans suresi/durumu nedeniyle giris kapali. Sistem yoneticisi ile iletisime gecin." }, 403);
+          }
+          if (end) {
+            const endD = new Date(end);
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            if (endD < today) {
+              return json({ ok: false, error: "Lisans suresi dolmus (" + end + ")" }, 403);
+            }
+          }
+        }
+        const uname = displayName({ username: u.username, name: u.name, tenant_code: u.tenant_code || tenant });
         return json({
           ok: true,
           source: "neon",
           multiTenant: true,
           user: {
             username: u.username,
-            name: u.name || u.username,
+            name: uname,
             role: u.role || "admin",
             wa: u.wa || "",
             sicil: u.sicil || "",
-            tenant
+            tenant,
+            is_platform_admin: tenant === "helpas" && (u.role === "admin")
           },
           tenant,
           tenant_name: trows[0].name || tenant,
           plan: trows[0].plan || "standard",
-          max_equipment: trows[0].max_equipment || 300
+          max_equipment: trows[0].max_equipment || planLimits(trows[0].plan).max_equipment,
+          max_users: trows[0].max_users || planLimits(trows[0].plan).max_users,
+          license_end: trows[0].license_end || null,
+          features: planLimits(trows[0].plan).features
         });
       }
 
